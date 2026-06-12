@@ -49,6 +49,17 @@
 - Machine-readable output where useful.
 - No runtime dependency on shell, Python, or Node for core behavior.
 
+## Development Posture
+
+`aikit` is developed with a deliberately **lightweight posture**:
+
+- Specification-first — design decisions are settled in docs before code is written.
+- Minimal moving parts — one binary, no sprawling runtime dependencies.
+- Incremental — build the smallest useful slice, validate it, then grow.
+- Low ceremony — avoid heavyweight process, frameworks, or tooling that the
+  scope does not yet justify.
+- Reversible — favor choices that are easy to revisit as the tool matures.
+
 ## Relationship to Architect Toolkit
 
 - Separate repo: `aikit` is **not** part of Architect Toolkit.
