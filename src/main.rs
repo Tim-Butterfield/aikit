@@ -8,12 +8,13 @@ mod batch;
 mod cli;
 mod errors;
 mod formats;
+mod inventory;
 mod output;
 mod repo;
 
 use clap::Parser;
 
-use cli::{BatchCommand, Cli, Command};
+use cli::{BatchCommand, Cli, Command, InventoryCommand};
 use errors::AikitError;
 
 fn main() {
@@ -30,6 +31,9 @@ fn run(cli: Cli) -> Result<(), AikitError> {
         Command::Batch(batch) => match batch.command {
             BatchCommand::Start(args) => batch::start(args),
             BatchCommand::Changed(args) => batch::changed(args),
+        },
+        Command::Inventory(inv) => match inv.command {
+            InventoryCommand::Repo(args) => inventory::repo(args),
         },
     }
 }

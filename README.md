@@ -7,10 +7,10 @@
 - Personal tool — built primarily for the architect's own use.
 - Private repo — not currently intended for public distribution, and may never be.
 - Not yet pushed to any remote.
-- Batch 1 implemented: the `aikit batch start` and `aikit batch changed` commands
-  (Rust scaffold, repo-root detection, anchor JSON, simple changed-file detection).
-- Remaining commands (`inventory repo`, `review generate`, `run script`) are not
-  implemented yet.
+- Implemented so far: `aikit batch start`, `aikit batch changed` (Batch 1), and
+  `aikit inventory repo` (Batch 2) — Rust scaffold, repo-root detection, anchor
+  JSON, changed-file detection, and a deterministic hashed repository inventory.
+- Remaining commands (`review generate`, `run script`) are not implemented yet.
 
 ## Purpose
 
@@ -103,9 +103,34 @@ Notes:
 - Every command has detailed `--help`. `aikit` calls no AI providers and has no
   knowledge of any AI agent, CLI, or model.
 
+### Repository inventory
+
+Generate a deterministic, hashed inventory of repository files:
+
+```sh
+aikit inventory repo          # human summary + writes inventory.json/.txt
+aikit inventory repo --json   # also prints the inventory JSON to stdout
+```
+
+- Output is written under the local output directory:
+  `.scratch/work/outputs/aikit/inventory/<id>/` when `.scratch/work/outputs/`
+  exists, otherwise `.aikit/outputs/inventory/<id>/` (override with `--output <dir>`).
+  Both `inventory.json` and `inventory.txt` are produced; output is local-only.
+- Traversal is gitignore-aware and **always** excludes `.git/` and common
+  build/dependency/output directories (`target/`, `node_modules/`, `dist/`,
+  `build/`, `.venv/`, `venv/`, and aikit's own output dirs), matched by directory
+  name rather than substring.
+- Files ignored by `.gitignore` are excluded by default; add `--include-ignored`
+  to include them (the always-excluded directories still apply).
+- `--max-files <n>` limits the listing deterministically (after sorting) and
+  records the limitation in the output.
+- Each entry records the repo-relative path, size, SHA-256, and a simple
+  extension-based `kind_hint`.
+
 ## Current State
 
-Batch 1 commands are implemented (`batch start`, `batch changed`). See
+Batch 1 (`batch start`, `batch changed`) and Batch 2 (`inventory repo`) commands
+are implemented. See
 [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
 [`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
 implementation plan, and

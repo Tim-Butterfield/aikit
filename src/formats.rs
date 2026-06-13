@@ -1,12 +1,13 @@
-//! Serializable Batch 1 data structures: the batch anchor and the changed-file
-//! report. All tool-owned formats carry a `schema_version` so later changes stay
-//! detectable.
+//! Serializable data structures: the batch anchor, the changed-file report, and
+//! the repository inventory. All tool-owned formats carry a `schema_version` so
+//! later changes stay detectable.
 
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const KIND_BATCH_ANCHOR: &str = "aikit.batch_anchor";
 pub const KIND_BATCH_CHANGED: &str = "aikit.batch_changed";
+pub const KIND_REPO_INVENTORY: &str = "aikit.repo_inventory";
 
 /// A point-in-time anchor written by `aikit batch start`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,4 +61,45 @@ pub struct Counts {
     pub created: usize,
     pub modified: usize,
     pub deleted: usize,
+}
+
+/// The output of `aikit inventory repo`.
+#[derive(Debug, Serialize)]
+pub struct RepoInventory {
+    pub schema_version: u32,
+    pub kind: String,
+    pub inventory_id: String,
+    pub repo_root: String,
+    pub git_head: String,
+    pub generated_at: String,
+    pub files: Vec<InventoryFile>,
+    pub counts: InventoryCounts,
+    /// Limitation notes (e.g., that `--max-files` truncated the listing). Present
+    /// only when relevant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InventoryFile {
+    pub path: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+    pub kind_hint: String,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct InventoryCounts {
+    /// Number of files included in this inventory (after any `--max-files` limit).
+    pub files: usize,
+    /// Total bytes across the included files.
+    pub bytes: u64,
+    /// Whether a `--max-files` limit truncated the listing.
+    pub truncated: bool,
+    /// The applied `--max-files` limit, when one was given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_files: Option<usize>,
+    /// Total files discovered before truncation, present only when truncated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_discovered: Option<usize>,
 }

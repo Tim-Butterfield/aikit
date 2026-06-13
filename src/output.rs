@@ -29,3 +29,8 @@ pub fn select_output_root(repo_root: &Path, override_dir: Option<&str>) -> PathB
 pub fn batches_dir(root: &Path) -> PathBuf {
     root.join("batches")
 }
+
+/// The `inventory/` subdirectory under an output root.
+pub fn inventory_dir(root: &Path) -> PathBuf {
+    root.join("inventory")
+}

@@ -16,6 +16,7 @@ serde_json = "1"
 thiserror = "1"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 sha2 = "0.10"
+ignore = "0.4"
 
 [dev-dependencies]
 assert_cmd = "2"
