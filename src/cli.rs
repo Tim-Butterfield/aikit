@@ -80,6 +80,21 @@ aikit review generate --files src/main.rs README.md\n  \
 aikit review generate --anchor .aikit/outputs/batches/<anchor-id>.json --json"
     )]
     Review(ReviewCli),
+
+    /// Run a local script under mechanical safety controls, with an audit record.
+    #[command(
+        long_about = "Run a local script through a fixed interpreter and record an audit \
+trail. This is NOT a security sandbox: it reduces accidental unsafe execution but does not \
+make an arbitrary script safe.\n\n\
+Use `run script <script-path>`. The script must live under an allowed local work area \
+(.aikit/temp/, .scratch/work/temp/, or .scratch/work/outputs/) — those are input locations, \
+not output locations. Only `.zsh` (/bin/zsh) and `.sh` (/bin/sh) are supported; the \
+interpreter is chosen from the extension, never from a shebang. The run record \
+(copied script, stdout.txt, stderr.txt, run.json) is written under the default output \
+directory .aikit/outputs/runs/<id>/; override with --output <dir> (`.scratch` output is \
+used only when requested explicitly)."
+    )]
+    Run(RunCli),
 }
 
 #[derive(Debug, Args)]
@@ -198,6 +213,69 @@ pub struct ReviewGenerateArgs {
     pub max_file_lines: Option<usize>,
 
     /// Print the machine-readable manifest JSON to stdout in addition to writing files.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RunCli {
+    #[command(subcommand)]
+    pub command: RunCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RunCommand {
+    /// Run a local script under mechanical safety controls (not a security sandbox).
+    #[command(
+        long_about = "Run a local script through a fixed interpreter and write an audit \
+record. NOTE: this is NOT a security sandbox. The allowed-location policy is the primary \
+control; the forbidden-operation scan is best-effort (naive substring matching, easily \
+bypassed, can false-positive), and running a script here does not make it safe.\n\n\
+The <script-path> must resolve (after symlink resolution) to a real file under an allowed \
+local work area: .aikit/temp/, .scratch/work/temp/, or .scratch/work/outputs/. These are \
+input locations only. Only `.zsh` (/bin/zsh) and `.sh` (/bin/sh) are supported; the \
+interpreter is selected from the extension, never from a shebang — extensionless or \
+unknown-extension scripts are rejected.\n\n\
+Clean-tree policy: the default is allow-dirty (these scripts operate on working content). \
+`--require-clean` blocks when the tracked tree is dirty; `--allow-dirty` is the explicit \
+default; the two cannot be combined. With `--print`, policy is validated and the planned \
+command is shown but the script is not executed (recorded as executed: false).\n\n\
+On execution the script is copied into the run directory (retaining its extension), stdout \
+and stderr are captured to stdout.txt / stderr.txt, and run.json records the audit metadata. \
+Output is written under .aikit/outputs/runs/<id>/ by default; override with --output <dir> \
+(`.scratch` output only when requested explicitly). Created artifact paths are printed (and \
+included in --json). The executed script's exit code is propagated.",
+        after_help = "Examples:\n  \
+aikit run script .aikit/temp/build.sh\n  \
+aikit run script .scratch/work/temp/task.zsh --print\n  \
+aikit run script .aikit/temp/check.sh --require-clean --json"
+    )]
+    Script(RunScriptArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RunScriptArgs {
+    /// Path to the script to run; must be under an allowed local work area.
+    #[arg(value_name = "SCRIPT_PATH")]
+    pub script: String,
+
+    /// Validate and print the planned command without executing the script.
+    #[arg(long)]
+    pub print: bool,
+
+    /// Block when the tracked working tree is dirty (mutually exclusive with --allow-dirty).
+    #[arg(long, conflicts_with = "allow_dirty")]
+    pub require_clean: bool,
+
+    /// Permit a dirty tracked working tree (this is the default when neither flag is given).
+    #[arg(long)]
+    pub allow_dirty: bool,
+
+    /// Override the output directory root (default: .aikit/outputs; pass .scratch/... to use scratch).
+    #[arg(long, value_name = "DIR")]
+    pub output: Option<String>,
+
+    /// Print the machine-readable run record (run.json) to stdout in addition to writing it.
     #[arg(long)]
     pub json: bool,
 }

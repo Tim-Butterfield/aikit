@@ -69,6 +69,17 @@ pub fn git_status_changed(root: &Path) -> String {
     .unwrap_or_default()
 }
 
+/// Whether the **tracked** working tree has uncommitted changes (modified, staged,
+/// or deleted tracked files). Untracked files do not count, and `git status` already
+/// excludes ignored files, so local-only areas like `.aikit/outputs/`, `.scratch/`,
+/// `.claude/`, and `target/` never make the tree "dirty" for `--require-clean`.
+pub fn is_tracked_tree_dirty(root: &Path) -> bool {
+    let porcelain = git_status_porcelain(root);
+    porcelain
+        .lines()
+        .any(|line| line.len() >= 2 && &line[..2] != "??")
+}
+
 /// Run a git command and return trimmed stdout, or `None` on failure.
 fn run_git(root: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git")

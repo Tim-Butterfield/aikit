@@ -16,9 +16,8 @@
 - Batch 4 is complete and committed.
 - Output-location policy correction is complete and committed (default output root is
   always `.aikit/outputs/`) — see "Output Location Policy Correction" below.
-- Current manifest scope: Batch 5.
-- Batch 5 has not yet been implemented.
-- This Batch 5 manifest update is expected to be reviewed before source changes for Batch 5 begin, and should not be committed until reviewed.
+- Batch 5 is complete and is being committed in this batch (governed script runner).
+- Next implementation scope: Batch 6 (local integration/polish), not yet started.
 
 ## 3. Classification Values
 
@@ -490,55 +489,32 @@ Before committing Batch 4 implementation, produce an expected-vs-actual file rep
 - unexpected files removed or justified;
 - final list of staged files.
 
-## Batch 5 Scope
+## Batch 5 Completed Scope
 
-Batch 5 should:
+Batch 5 is complete and committed (in this batch). It delivered:
 
-- implement `aikit run script <script-path>`;
-- support `--print`;
-- support `--require-clean`;
-- support `--allow-dirty`;
-- reject `--require-clean` and `--allow-dirty` used together;
-- default to allow-dirty when neither flag is supplied;
-- allow only known script extensions initially:
-  - `.zsh` through `/bin/zsh`;
-  - `.sh` through `/bin/sh`;
-- reject extensionless scripts;
-- reject unknown-extension scripts;
-- choose the interpreter from the extension, not from shebang;
-- allow script inputs only from explicitly allowed local work areas;
-- canonicalize script paths before reading/copying/executing;
-- reject script symlink escapes;
-- reject script paths outside allowed locations;
-- implement a best-effort static forbidden-operation scan;
-- clearly document that this is not a security sandbox;
-- support `--output <path>`;
-- default run outputs to `.aikit/outputs/runs/`;
-- use `.scratch` for output only through explicit `--output`;
-- copy the script into the run output directory while retaining its extension;
-- capture stdout to `stdout.txt`;
-- capture stderr to `stderr.txt`;
-- write `run.json`;
-- include interpreter, argv, cwd, require_clean, executed, timings, git head before/after, exit_code, blocked_state, stdout_path, stderr_path, and script_copy_path in run metadata;
-- when `--print` is used, do not execute and record/print `executed: false`;
-- when execution occurs, propagate the script exit code;
-- update README usage documentation for governed script runner;
-- add tests for risky behavior;
-- compare actual files to this manifest before commit.
+- `aikit run script <script-path>` with `--print`, `--require-clean`, `--allow-dirty`,
+  `--output`, and `--json`;
+- `--require-clean` + `--allow-dirty` rejected together (invalid usage); default is allow-dirty;
+- allowed script inputs only under `.aikit/temp/`, `.scratch/work/temp/`, `.scratch/work/outputs/`;
+- canonicalized path resolution rejecting missing scripts, directories, symlink escapes, and out-of-allowlist paths;
+- interpreter chosen from extension (`.zsh` → `/bin/zsh`, `.sh` → `/bin/sh`); extensionless/unknown rejected; shebangs not trusted;
+- best-effort static forbidden-operation scan (documented as not a security boundary);
+- `--print` validates and shows the plan without executing (`executed: false`);
+- default output `.aikit/outputs/runs/<id>/` (`.scratch` only via explicit `--output`); script copied with its extension; `stdout.txt`, `stderr.txt`, and `run.json` written; created paths printed (and in `--json`);
+- run metadata (interpreter, argv, cwd, require_clean, allow_dirty, executed, timings, git heads, exit_code, blocked_state, paths);
+- executed script exit code propagated;
+- a `src/policy/` module (`mod.rs` + `script.rs`) for the deterministic, best-effort policy rules;
+- run-script tests, README usage + safety warning, and help on `aikit run --help` / `aikit run script --help` that clearly states it is not a security sandbox.
 
-Batch 5 must not:
+Known Batch 5 expected-vs-actual deviations:
 
-- become a security sandbox;
-- run arbitrary scripts from arbitrary locations;
-- support Python/Node execution initially;
-- trust arbitrary shebangs initially;
-- implement remote execution;
-- implement package-manager orchestration;
-- create agent skills;
-- create release automation;
-- push to remote.
+- `Cargo.toml` and `Cargo.lock` were unchanged because no new dependency was needed (reused serde/serde_json/sha2/time).
+- All other Batch 5 expected files (README, main, cli, run, policy/mod, policy/script, output, repo, formats, errors, tests/cli_run_script) were created/modified as expected.
 
-## Batch 5 Allowed Script Input Locations
+The sections below are retained as the historical Batch 5 manifest record.
+
+## Batch 5 Allowed Script Input Locations - Completed
 
 Initial script inputs are allowed only under:
 
@@ -552,7 +528,7 @@ Clarifications:
 - The default output location for run records remains `.aikit/outputs/runs/`.
 - `.scratch` output is used only when explicitly requested through `--output`.
 
-## Batch 5 Forbidden Operation Scan
+## Batch 5 Forbidden Operation Scan - Completed
 
 The initial best-effort static scan should block clear textual matches such as:
 
@@ -573,7 +549,7 @@ Explicitly:
 - The allowed-location policy is the primary control.
 - `aikit run script` does not make arbitrary scripts safe.
 
-## Batch 5 Expected Committed Files
+## Batch 5 Expected Committed Files - Completed
 
 | Path | Classification | Purpose | Notes |
 |---|---|---|---|
@@ -591,7 +567,7 @@ Explicitly:
 | `Cargo.toml` | modified | Add any dependency needed for Batch 5 if not already present | Only add dependencies if actually needed |
 | `Cargo.lock` | modified | Reflect dependency graph changes if Cargo.toml changes | No manual editing |
 
-## Batch 5 Expected Generated or Local-Only Files
+## Batch 5 Expected Generated or Local-Only Files - Completed
 
 | Path / Pattern | Classification | Purpose | Commit Policy |
 |---|---|---|---|
@@ -603,7 +579,7 @@ Explicitly:
 | `.scratch/work/outputs/` | local-only | Allowed local script input location and optional output only when explicitly requested | Never commit |
 | `.claude/` | local-only | External harness state if present | Never commit |
 
-## Batch 5 Deferred Files
+## Batch 5 Deferred Files - Completed
 
 | Path / Area | Classification | Reason Deferred |
 |---|---|---|
@@ -613,7 +589,7 @@ Explicitly:
 | Python/Node script execution | deferred | Initial interpreter map supports only `.zsh` and `.sh` |
 | automatic cleanup commands | deferred | Old anchors/runs remain human-cleanup artifacts for now |
 
-## Batch 5 Help Text Expectations
+## Batch 5 Help Text Expectations - Completed
 
 Batch 5 must provide useful help for:
 
@@ -640,7 +616,7 @@ Help must make clear:
 - exit-code propagation;
 - short examples where useful.
 
-## Batch 5 Test Expectations
+## Batch 5 Test Expectations - Completed
 
 Expected tests should cover:
 
@@ -671,7 +647,7 @@ Expected tests should cover:
 - copied script retains its extension;
 - commands print exact created artifact paths.
 
-## Batch 5 Expected-vs-Actual Verification
+## Batch 5 Expected-vs-Actual Verification - Completed
 
 Before committing Batch 5 implementation, produce an expected-vs-actual file report with:
 

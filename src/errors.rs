@@ -16,6 +16,10 @@ pub mod blocked {
     pub const INVALID_ANCHOR: &str = "blocked_invalid_anchor";
     pub const PATH_ESCAPE: &str = "blocked_path_escape";
     pub const UNREADABLE_FILE: &str = "blocked_unreadable_file";
+    pub const SCRIPT_NOT_ALLOWED: &str = "blocked_script_not_allowed";
+    pub const UNSUPPORTED_MODE: &str = "blocked_unsupported_mode";
+    pub const DIRTY_TREE: &str = "blocked_dirty_tree";
+    pub const FORBIDDEN_OPERATION: &str = "blocked_forbidden_operation";
 }
 
 #[derive(Debug, Error)]

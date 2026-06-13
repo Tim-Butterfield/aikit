@@ -9,6 +9,7 @@ pub const KIND_BATCH_ANCHOR: &str = "aikit.batch_anchor";
 pub const KIND_BATCH_CHANGED: &str = "aikit.batch_changed";
 pub const KIND_REPO_INVENTORY: &str = "aikit.repo_inventory";
 pub const KIND_REVIEW_BUNDLE: &str = "aikit.review_bundle";
+pub const KIND_SCRIPT_RUN: &str = "aikit.script_run";
 
 /// A point-in-time anchor written by `aikit batch start`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -164,4 +165,36 @@ pub struct ReviewTotals {
     pub files_included: usize,
     pub files_omitted: usize,
     pub bytes_included: u64,
+}
+
+/// The audit record written by `aikit run script` (run.json).
+#[derive(Debug, Serialize)]
+pub struct ScriptRun {
+    pub schema_version: u32,
+    pub kind: String,
+    pub run_id: String,
+    pub repo_root: String,
+    /// Repo-relative path of the script as resolved (canonicalized).
+    pub script_path: String,
+    pub script_sha256: String,
+    /// Filename of the script copy inside the run directory (retains the extension).
+    pub script_copy_path: Option<String>,
+    pub interpreter: String,
+    pub argv: Vec<String>,
+    pub cwd: String,
+    pub require_clean: bool,
+    pub allow_dirty: bool,
+    /// False when `--print` was used (the script was not executed).
+    pub executed: bool,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub git_head_before: String,
+    pub git_head_after: Option<String>,
+    /// Exit code of the executed script, or `null` when not executed.
+    pub exit_code: Option<i32>,
+    /// Set when the run was blocked before execution; `null` otherwise.
+    pub blocked_state: Option<String>,
+    pub stdout_path: Option<String>,
+    pub stderr_path: Option<String>,
 }

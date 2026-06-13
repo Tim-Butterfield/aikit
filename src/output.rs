@@ -32,3 +32,8 @@ pub fn inventory_dir(root: &Path) -> PathBuf {
 pub fn reviews_dir(root: &Path) -> PathBuf {
     root.join("reviews")
 }
+
+/// The `runs/` subdirectory under an output root.
+pub fn runs_dir(root: &Path) -> PathBuf {
+    root.join("runs")
+}

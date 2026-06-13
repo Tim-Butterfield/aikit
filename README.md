@@ -8,12 +8,13 @@
 - Private repo — not currently intended for public distribution, and may never be.
 - Not yet pushed to any remote.
 - Implemented so far: `aikit batch start`, `aikit batch changed` (Batch 1),
-  `aikit inventory repo` (Batch 2), and `aikit review generate` from explicit files
-  (Batch 3) or a batch anchor (Batch 4) — Rust scaffold, repo-root detection, anchor
-  JSON, changed-file detection, a deterministic hashed repository inventory, and
-  bounded review-bundle generation from explicit files or anchor-driven changes.
-- Remaining: the precomputed `--changed <changed.json>` review mode and
-  `aikit run script` are not implemented yet.
+  `aikit inventory repo` (Batch 2), `aikit review generate` from explicit files
+  (Batch 3) or a batch anchor (Batch 4), and `aikit run script` (Batch 5) — Rust
+  scaffold, repo-root detection, anchor JSON, changed-file detection, a deterministic
+  hashed repository inventory, bounded review-bundle generation, and a governed local
+  script runner (not a security sandbox).
+- Remaining: the precomputed `--changed <changed.json>` review mode is not
+  implemented (anchor mode covers the changed-since-anchor case).
 
 ## Purpose
 
@@ -174,12 +175,47 @@ aikit review generate --anchor .aikit/outputs/batches/<anchor-id>.json
 - For anchor mode, `manifest.json` records `inputs.mode = "changed_since_anchor"`
   along with the anchor path and id.
 
+### Governed script runner
+
+> **Not a security sandbox.** `aikit run script` reduces *accidental* unsafe
+> execution; it does not make an arbitrary script safe. The allowed-location policy
+> is the primary control, and the forbidden-operation scan is best-effort (naive
+> substring matching, easily bypassed, can false-positive).
+
+Run a local script through a fixed interpreter and record an audit trail:
+
+```sh
+aikit run script .aikit/temp/build.sh             # run; record the audit trail
+aikit run script .scratch/work/temp/task.zsh --print   # validate + show plan, do not run
+aikit run script .aikit/temp/check.sh --require-clean   # block if the tracked tree is dirty
+```
+
+- **Allowed script input locations** (the script must resolve, after symlink
+  resolution, to a real file under one of these): `.aikit/temp/`,
+  `.scratch/work/temp/`, `.scratch/work/outputs/`. These are *input* locations, not
+  output locations.
+- **Interpreters** come from the extension, never a shebang: `.zsh` → `/bin/zsh`,
+  `.sh` → `/bin/sh`. Extensionless or unknown-extension scripts are rejected.
+- **Clean-tree policy:** the default is allow-dirty. `--require-clean` blocks when
+  the tracked working tree is dirty; `--allow-dirty` is the explicit default; the two
+  cannot be combined. Untracked/ignored files (e.g. `.aikit/outputs/`, `.scratch/`)
+  do not make the tree dirty.
+- **`--print`** validates policy and shows the planned command without executing
+  (recorded as `executed: false`).
+- **Output:** a run directory under `.aikit/outputs/runs/<id>/` by default (override
+  with `--output <dir>`; `.scratch` output only when requested explicitly) containing
+  the copied script (extension retained), `stdout.txt`, `stderr.txt`, and `run.json`
+  (interpreter, argv, cwd, require_clean, executed, git heads, exit_code, timings,
+  paths, …). Created paths are printed (and included in `--json`).
+- **Exit code:** an executed script's exit code is propagated; policy blocks return a
+  non-zero `blocked_*` error (exit 3); invalid usage is exit 2.
+
 ## Current State
 
-Batch 1 (`batch start`, `batch changed`), Batch 2 (`inventory repo`), and Batch 3 +
-Batch 4 (`review generate --files` and `review generate --anchor`) commands are
-implemented. The precomputed `--changed <changed.json>` review mode and
-`aikit run script` are not implemented yet. See
+Batch 1 (`batch start`, `batch changed`), Batch 2 (`inventory repo`), Batch 3 +
+Batch 4 (`review generate --files` and `review generate --anchor`), and Batch 5
+(`run script`) commands are implemented. The precomputed `--changed <changed.json>`
+review mode is not implemented (anchor mode covers the changed-since-anchor case). See
 [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
 [`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
 implementation plan, and
