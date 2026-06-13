@@ -13,11 +13,12 @@
 - Batch 1 is complete and committed.
 - Batch 2 is complete and committed.
 - Batch 3 is complete and committed.
+- Batch 4 is complete and committed.
 - Output-location policy correction is complete and committed (default output root is
   always `.aikit/outputs/`) — see "Output Location Policy Correction" below.
-- Current manifest scope: Batch 4.
-- Batch 4 has not yet been implemented.
-- This Batch 4 manifest update is expected to be reviewed before source changes for Batch 4 begin, and should not be committed until reviewed.
+- Current manifest scope: Batch 5.
+- Batch 5 has not yet been implemented.
+- This Batch 5 manifest update is expected to be reviewed before source changes for Batch 5 begin, and should not be committed until reviewed.
 
 ## 3. Classification Values
 
@@ -376,41 +377,31 @@ of created paths in `--json`, without embedding paths in the durable on-disk art
 the three test files, `README.md`, and `docs/aikit-implementation-plan.md` (§8). No new
 dependencies; no `src/formats.rs` schema change; no runtime provider/model/agent logic.
 
-## Batch 4 Scope
+## Batch 4 Completed Scope
 
-Batch 4 should:
+Batch 4 is complete and committed. It delivered:
 
-- implement `aikit review generate --anchor <anchor.json>`;
-- read and validate a batch anchor file;
-- reject missing/invalid anchors;
-- reject anchors from another repo;
-- compute the changed-file set from the anchor using the existing `batch changed` behavior;
-- feed the resulting changed files into existing review bundle generation behavior;
-- produce `run_for_review.txt`;
-- produce `manifest.json`;
-- support `--output <path>`;
-- support `--max-file-bytes <n>`;
-- support `--max-total-bytes <n>`;
-- support `--max-file-lines <n>`;
-- support `--json`;
-- preserve deterministic file ordering;
-- preserve path/symlink safety behavior;
-- preserve truncation/omission/fence behavior from Batch 3;
-- default outputs to `.aikit/outputs/reviews/`;
-- use `.scratch` only through explicit `--output`;
-- update README usage documentation for anchor-driven review bundles;
-- add tests for anchor-driven review bundle generation;
-- compare actual files to this manifest before commit.
+- `aikit review generate --anchor <anchor.json>`;
+- anchor-driven review bundle generation;
+- preserved `--files <file>...` mode;
+- exactly-one-input-mode enforcement between `--files` and `--anchor`;
+- missing/invalid/cross-repo anchor rejection;
+- changed-file computation from batch anchors;
+- reuse of existing review bundle pipeline;
+- default `.aikit/outputs/reviews/`;
+- `.scratch` only through explicit `--output`;
+- review help updates;
+- anchor-mode tests;
+- README usage update.
 
-Batch 4 must not:
+Known Batch 4 expected-vs-actual deviations:
 
-- implement any precomputed `--changed <changed.json>` review mode;
-- implement `aikit run script`;
-- create agent skills;
-- create release automation;
-- push to remote.
+- `src/errors.rs` was unchanged because existing missing/invalid anchor states were reused.
+- `Cargo.toml` and `Cargo.lock` were unchanged because no new dependency was needed.
 
-## Batch 4 Expected Committed Files
+The tables below are retained as the historical Batch 4 manifest record.
+
+## Batch 4 Expected Committed Files - Completed
 
 | Path | Classification | Purpose | Notes |
 |---|---|---|---|
@@ -424,7 +415,7 @@ Batch 4 must not:
 | `Cargo.toml` | modified | Add any dependency needed for Batch 4 if not already present | Only add dependencies if actually needed |
 | `Cargo.lock` | modified | Reflect dependency graph changes if Cargo.toml changes | No manual editing |
 
-## Batch 4 Expected Generated or Local-Only Files
+## Batch 4 Expected Generated or Local-Only Files - Completed
 
 | Path / Pattern | Classification | Purpose | Commit Policy |
 |---|---|---|---|
@@ -435,7 +426,7 @@ Batch 4 must not:
 | `.aikit/outputs/batches/` | local-only | Default batch anchor output | Never commit |
 | `.scratch/work/outputs/aikit/reviews/` | local-only | Optional review output only when explicitly requested through `--output` | Never commit |
 
-## Batch 4 Deferred Files
+## Batch 4 Deferred Files - Completed
 
 | Path / Area | Classification | Reason Deferred |
 |---|---|---|
@@ -445,7 +436,7 @@ Batch 4 must not:
 | `docs/agent-usage.md` | deferred | Optional future documentation only |
 | `.github/workflows/` | deferred | Release/CI automation deferred |
 
-## Batch 4 Help Text Expectations
+## Batch 4 Help Text Expectations - Completed
 
 Batch 4 must update useful help for:
 
@@ -465,7 +456,7 @@ Help must make clear:
 - cap/truncation behavior;
 - short examples where useful.
 
-## Batch 4 Test Expectations
+## Batch 4 Test Expectations - Completed
 
 Expected tests should cover:
 
@@ -488,7 +479,7 @@ Expected tests should cover:
 - cap/truncation/omission behavior from explicit-file mode still works for anchor mode;
 - `--json` output includes machine-readable created artifact paths.
 
-## Batch 4 Expected-vs-Actual Verification
+## Batch 4 Expected-vs-Actual Verification - Completed
 
 Before committing Batch 4 implementation, produce an expected-vs-actual file report with:
 
@@ -499,7 +490,198 @@ Before committing Batch 4 implementation, produce an expected-vs-actual file rep
 - unexpected files removed or justified;
 - final list of staged files.
 
+## Batch 5 Scope
+
+Batch 5 should:
+
+- implement `aikit run script <script-path>`;
+- support `--print`;
+- support `--require-clean`;
+- support `--allow-dirty`;
+- reject `--require-clean` and `--allow-dirty` used together;
+- default to allow-dirty when neither flag is supplied;
+- allow only known script extensions initially:
+  - `.zsh` through `/bin/zsh`;
+  - `.sh` through `/bin/sh`;
+- reject extensionless scripts;
+- reject unknown-extension scripts;
+- choose the interpreter from the extension, not from shebang;
+- allow script inputs only from explicitly allowed local work areas;
+- canonicalize script paths before reading/copying/executing;
+- reject script symlink escapes;
+- reject script paths outside allowed locations;
+- implement a best-effort static forbidden-operation scan;
+- clearly document that this is not a security sandbox;
+- support `--output <path>`;
+- default run outputs to `.aikit/outputs/runs/`;
+- use `.scratch` for output only through explicit `--output`;
+- copy the script into the run output directory while retaining its extension;
+- capture stdout to `stdout.txt`;
+- capture stderr to `stderr.txt`;
+- write `run.json`;
+- include interpreter, argv, cwd, require_clean, executed, timings, git head before/after, exit_code, blocked_state, stdout_path, stderr_path, and script_copy_path in run metadata;
+- when `--print` is used, do not execute and record/print `executed: false`;
+- when execution occurs, propagate the script exit code;
+- update README usage documentation for governed script runner;
+- add tests for risky behavior;
+- compare actual files to this manifest before commit.
+
+Batch 5 must not:
+
+- become a security sandbox;
+- run arbitrary scripts from arbitrary locations;
+- support Python/Node execution initially;
+- trust arbitrary shebangs initially;
+- implement remote execution;
+- implement package-manager orchestration;
+- create agent skills;
+- create release automation;
+- push to remote.
+
+## Batch 5 Allowed Script Input Locations
+
+Initial script inputs are allowed only under:
+
+- `.aikit/temp/`
+- `.scratch/work/temp/`
+- `.scratch/work/outputs/`
+
+Clarifications:
+
+- These are allowed input locations for scripts, not default output locations.
+- The default output location for run records remains `.aikit/outputs/runs/`.
+- `.scratch` output is used only when explicitly requested through `--output`.
+
+## Batch 5 Forbidden Operation Scan
+
+The initial best-effort static scan should block clear textual matches such as:
+
+- `git push`
+- `git fetch`
+- `git pull`
+- `gh repo create`
+- `gh repo delete`
+- `rm -rf /`
+- `sudo`
+
+Explicitly:
+
+- The scan is crude and best-effort.
+- It can false-positive.
+- It can be bypassed intentionally.
+- It is a guard against obvious accidental mistakes, not a security boundary.
+- The allowed-location policy is the primary control.
+- `aikit run script` does not make arbitrary scripts safe.
+
+## Batch 5 Expected Committed Files
+
+| Path | Classification | Purpose | Notes |
+|---|---|---|---|
+| `README.md` | modified | Add governed script runner usage and safety warning | Clearly state not a security sandbox |
+| `src/main.rs` | modified | Register run module if required by module layout | Include because command-family wiring may require main.rs changes |
+| `src/cli.rs` | modified | Add run command definitions and help text | Include useful help for `aikit run --help` and `aikit run script --help` |
+| `src/run.rs` | new | Implement `aikit run script <script-path>` | Include path checks, policy checks, print mode, execution, stdout/stderr capture, run metadata |
+| `src/policy/mod.rs` | new | Policy module root for script-runner rules | Keep policy limited to deterministic local script-runner checks |
+| `src/policy/script.rs` | new | Allowed-location, interpreter, extension, and forbidden-operation scan policy | Must clearly remain best-effort, not sandbox semantics |
+| `src/output.rs` | modified | Support run output directory helpers | Default `.aikit/outputs/runs/`; `--output` override |
+| `src/repo.rs` | modified | Support clean-tree checks and git head before/after if needed | Reuse existing Git helpers where possible |
+| `src/formats.rs` | modified | Add run metadata data structures | Include schema_version, kind, run_id, repo_root, script_path, script_sha256, script_copy_path, interpreter, argv, cwd, require_clean, executed, timestamps, duration_ms, git heads, exit_code, blocked_state, stdout_path, stderr_path |
+| `src/errors.rs` | modified | Add script-runner blocked states/errors as needed | Include path/script/policy/unsupported-mode cases without over-expanding the model |
+| `tests/cli_run_script.rs` | new | Integration tests for governed script runner | Use temporary Git repos and small scripts; avoid dangerous commands except harmless static-scan fixtures |
+| `Cargo.toml` | modified | Add any dependency needed for Batch 5 if not already present | Only add dependencies if actually needed |
+| `Cargo.lock` | modified | Reflect dependency graph changes if Cargo.toml changes | No manual editing |
+
+## Batch 5 Expected Generated or Local-Only Files
+
+| Path / Pattern | Classification | Purpose | Commit Policy |
+|---|---|---|---|
+| `target/` | generated | Rust build/test output | Never commit |
+| `.aikit/outputs/runs/` | local-only | Default run output | Never commit |
+| `.aikit/temp/` | local-only | Allowed local script input location | Never commit |
+| `.scratch/` | local-only | Local work/review artifacts or explicit output override only | Never commit |
+| `.scratch/work/temp/` | local-only | Allowed local script input location | Never commit |
+| `.scratch/work/outputs/` | local-only | Allowed local script input location and optional output only when explicitly requested | Never commit |
+| `.claude/` | local-only | External harness state if present | Never commit |
+
+## Batch 5 Deferred Files
+
+| Path / Area | Classification | Reason Deferred |
+|---|---|---|
+| `docs/agent-usage.md` | deferred | Optional future documentation only |
+| `.github/workflows/` | deferred | Release/CI automation deferred |
+| remote execution | deferred | Out of initial scope |
+| Python/Node script execution | deferred | Initial interpreter map supports only `.zsh` and `.sh` |
+| automatic cleanup commands | deferred | Old anchors/runs remain human-cleanup artifacts for now |
+
+## Batch 5 Help Text Expectations
+
+Batch 5 must provide useful help for:
+
+- `aikit run --help`
+- `aikit run script --help`
+
+Help must make clear:
+
+- purpose;
+- when to use;
+- allowed script locations;
+- supported extensions/interpreters;
+- `--print` behavior;
+- `--require-clean` behavior;
+- `--allow-dirty` behavior;
+- default allow-dirty behavior;
+- `--require-clean` and `--allow-dirty` cannot be combined;
+- forbidden-operation scan is best-effort;
+- this is not a security sandbox;
+- default output is `.aikit/outputs/runs/`;
+- `.scratch` output is available only through explicit `--output`;
+- created artifact paths are printed;
+- JSON behavior if supported;
+- exit-code propagation;
+- short examples where useful.
+
+## Batch 5 Test Expectations
+
+Expected tests should cover:
+
+- run help is available;
+- run script help is available;
+- help clearly states not a security sandbox;
+- script outside repo is rejected;
+- script outside allowed locations is rejected;
+- symlinked script whose resolved path leaves repo or allowlist is rejected;
+- extensionless script is rejected;
+- unknown-extension script is rejected;
+- `.zsh` script runs through `/bin/zsh`;
+- `.sh` script runs through `/bin/sh`;
+- `--print` does not execute the script;
+- `--print` records/reports `executed: false`;
+- default policy is allow-dirty when neither clean flag is supplied;
+- `--require-clean` blocks when tracked tree is dirty;
+- `--allow-dirty` allows dirty tracked tree;
+- `--require-clean` and `--allow-dirty` together are invalid usage;
+- forbidden-operation scan blocks obvious forbidden text;
+- stdout is captured to `stdout.txt`;
+- stderr is captured to `stderr.txt`;
+- `run.json` is written;
+- run metadata includes interpreter, argv, cwd, require_clean, executed, git heads, exit_code, blocked_state, stdout_path, stderr_path, script_copy_path;
+- executed script exit code is propagated;
+- default output goes to `.aikit/outputs/runs/`;
+- explicit `--output .scratch/work/outputs/aikit/runs` uses `.scratch` as requested;
+- copied script retains its extension;
+- commands print exact created artifact paths.
+
+## Batch 5 Expected-vs-Actual Verification
+
+Before committing Batch 5 implementation, produce an expected-vs-actual file report with:
+
+- expected committed files created/modified;
+- expected generated/local-only files observed;
+- deferred files not created;
+- unexpected files created;
+- unexpected files removed or justified;
+- final list of staged files.
+
 ## 11. Future Batch Manifest Updates
 
-- Before Batch 5, update this manifest for governed script runner files.
 - Before Batch 6, update this manifest for local integration/polish.
