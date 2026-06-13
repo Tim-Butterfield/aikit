@@ -1282,3 +1282,43 @@ Help text is part of the product.
   - tests for batch behavior;
   - basic CLI help.
 - No deferred commands should be implemented in Batch 1.
+
+## 22. Post-Initial Command-Shape Correction and Approved Slices
+
+The initial six batches are complete (see the implementation manifest). The sections
+above (including §11.5) are retained as the historical record of the original design,
+which spelled the script command as `aikit run script`. This section records an
+approved post-initial correction and the approved direction for further slices.
+
+### 22.1 Command-shape correction (Slice 1 — implemented)
+
+- The script command family is corrected from the verb-first `aikit run script` to the
+  noun-family / action form:
+  - `aikit script run <script-path>` — run a script under policy controls (preserves the
+    previous `aikit run script` behavior);
+  - `aikit script check <script-path>` — validate a script against the same policy
+    without executing it and without writing any run output.
+- `aikit run script` (and the top-level `aikit run`) is **superseded and removed**. It
+  is **not** retained as a compatibility alias — there is exactly one public way to run a
+  script (`aikit script run`).
+- Where earlier sections (e.g. §11.5) describe `aikit run script`, read them as the
+  historical spec of the behavior now provided by `aikit script run`.
+
+### 22.2 Approved post-initial slices (direction only)
+
+The following slices are approved direction. **Only Slice 1 is implemented now**; the
+rest are recorded so the command grammar stays coherent, and are not implemented in this
+slice. No separate roadmap document is created — this section is the record.
+
+- **Slice 1 (implemented):** `aikit script run`, `aikit script check`; remove
+  `aikit run script`.
+- **Slice 2 (approved, not implemented):** `aikit repo init`, `aikit repo doctor`.
+- **Slice 3 (approved, not implemented):** `aikit output list`, `aikit output show`,
+  `aikit output clean`.
+- **Slice 4 (approved, not implemented):** `aikit batch list`, `aikit batch show`,
+  `aikit diff anchor`.
+- **Slice 5 (approved, not implemented):** `aikit env snapshot`, `aikit scan secrets`.
+
+These follow the same noun-family / action grammar as Slice 1. Each future slice will be
+implemented only under its own explicitly approved task, with the same checks / review /
+manifest discipline used for the initial batches.

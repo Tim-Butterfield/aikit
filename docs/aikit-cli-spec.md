@@ -30,7 +30,7 @@ judgments itself.
 
 The initial spec covers only:
 
-- governed local script execution;
+- governed local script validation and execution;
 - batch anchor creation;
 - changed-file discovery from an anchor;
 - review bundle generation;
@@ -55,16 +55,21 @@ Explicitly out of scope for the initial spec:
 The initial command families. Behaviors below are **specification intent**, not
 implementation commitments.
 
-### 5.1 `aikit run script`
+### 5.1 `aikit script run` / `aikit script check`
 
-**Purpose:**
+The `script` command family is a noun (`script`) with verb actions (`run`, `check`).
+There is exactly one public way to run a script (`aikit script run`); the earlier
+`aikit run script` shape was superseded by this command and is **not** retained as an
+alias (see the implementation plan's post-initial command-shape correction).
+
+**`aikit script run` — purpose:**
 - execute a local script under policy controls;
 - support audit echo;
 - capture stdout/stderr/exit code;
 - write run metadata;
 - block unsafe operations where mechanically detectable.
 
-**Initial behavior:**
+**`aikit script run` — initial behavior:**
 - detect repo root;
 - require the script path to be inside allowed project-local locations;
 - reject repo escapes;
@@ -72,6 +77,21 @@ implementation commitments.
 - echo the command before execution;
 - capture a run record;
 - propagate the script's exit code unless `aikit` blocks first.
+
+**`aikit script check` — purpose:**
+- validate a script against the same policy without executing it;
+- report whether the policy accepts the script, and the blocked state when it does not.
+
+**`aikit script check` — initial behavior:**
+- detect repo root;
+- resolve/canonicalize the script path and validate the allowed location, path/symlink
+  boundary, and extension/interpreter;
+- run the best-effort forbidden-operation scan;
+- apply the clean-tree policy;
+- do not execute the script, do not copy it, and create no run output (no run
+  directory, `stdout.txt`, `stderr.txt`, or `run.json`);
+- exit 0 when the policy accepts the script and exit 3 with the named blocked state when
+  it does not.
 
 ### 5.2 `aikit batch start`
 

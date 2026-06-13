@@ -73,8 +73,9 @@ A typical local cycle:
    `aikit review generate --files <file>...`.
 7. Or generate a review bundle for the changed-since-anchor set:
    `aikit review generate --anchor <anchor.json>`.
-8. Run a constrained local script (from an allowed location) when needed:
-   `aikit run script <script-path>`.
+8. Optionally validate a constrained local script first with
+   `aikit script check <script-path>`, then run it (from an allowed location) when
+   needed: `aikit script run <script-path>`.
 9. Run the project's own checks (build, tests, lint) — these are the project's
    responsibility, not `aikit`'s.
 10. Report exact results: command, exit code, created output paths, and any blocked
@@ -138,7 +139,7 @@ A typical local cycle:
 - **Output:** same as `--files`; `manifest.json` records
   `inputs.mode = "changed_since_anchor"` plus the anchor path and id.
 
-### `aikit run script <script-path>`
+### `aikit script run <script-path>`
 
 - **Purpose:** run a constrained local script through a fixed interpreter and record an
   audit trail.
@@ -148,6 +149,21 @@ A typical local cycle:
 - **Output:** a run directory under `.aikit/outputs/runs/<id>/` by default (copied
   script, `stdout.txt`, `stderr.txt`, `run.json`). The executed script's exit code is
   propagated.
+
+### `aikit script check <script-path>`
+
+- **Purpose:** validate a script against the same policy `script run` uses, without
+  executing it.
+- **Typical use:** confirm a generated script will be accepted (allowed location,
+  path/symlink boundary, extension/interpreter, forbidden-operation scan, clean-tree
+  policy) before running it.
+- **Constraints:** same policy as `script run`; optional `--require-clean` /
+  `--allow-dirty` (default allow-dirty) and `--json`. There is no `--print` (the command
+  already never executes). This is **not** a security sandbox.
+- **Output:** a printed (or `--json`) report with `accepted` / `blocked_state`; the
+  script is never executed or copied, and **no** run directory, `stdout.txt`,
+  `stderr.txt`, or `run.json` is created. Exit 0 when accepted, exit 3 with the named
+  blocked state when blocked.
 
 ## Output Locations
 
@@ -178,10 +194,12 @@ A typical local cycle:
 
 ## Script Runner Use
 
-- `aikit run script` runs **constrained local scripts only**.
-- It is **not a security sandbox**, and running a script through it does **not** make
-  the script safe. The allowed-location policy is the primary control; the
-  forbidden-operation scan is best-effort and is **not** a security boundary.
+- `aikit script run` runs **constrained local scripts only**; `aikit script check`
+  applies the exact same policy without executing anything and without writing any run
+  output. Use `script check` to confirm a script will be accepted before running it.
+- Neither is a **security sandbox**, and running a script does **not** make the script
+  safe. The allowed-location policy is the primary control; the forbidden-operation scan
+  is best-effort and is **not** a security boundary.
 - **Allowed script input locations** (the script must resolve, after symlink
   resolution, to a real file under one of these):
   - `.aikit/temp/`
@@ -205,7 +223,7 @@ A typical local cycle:
 
 `aikit` validates *where the script file lives* (it must resolve to a real file under an
 allowed input location) and records the run. But once execution begins, the script runs
-from the repository root through `/bin/sh` or `/bin/zsh`, and `aikit run script` does
+from the repository root through `/bin/sh` or `/bin/zsh`, and `aikit script run` does
 **not** constrain which paths the script touches after it starts — it is **not a
 filesystem sandbox**. A script under `.aikit/temp/do_stuff.sh` can therefore read and
 write files across the repository, which is exactly what makes useful commands (`sed`,
@@ -213,7 +231,7 @@ write files across the repository, which is exactly what makes useful commands (
 script could also reach outside the repository. The agent that generates the script is
 responsible for keeping it within the intended repository-local boundary.
 
-> `aikit run script` validates where the script file lives and records the run, but it
+> `aikit script run` validates where the script file lives and records the run, but it
 > does not sandbox every path the script touches after execution. The agent is
 > responsible for generating scripts that operate only within the intended
 > repository-local boundary unless the user explicitly approves a wider scope.
@@ -261,7 +279,7 @@ responsible for keeping it within the intended repository-local boundary.
 - Do **not** assume the "latest" anchor automatically — always pass an explicit
   `--anchor <anchor.json>`.
 - Do **not** assume `.scratch` is the default output — the default is `.aikit/outputs/`.
-- Do **not** assume `run script` makes a script safe — it does not.
+- Do **not** assume `script run` makes a script safe — it does not.
 - Do **not** assume any remote/push/fetch/pull behavior exists — `aikit` never touches
   remotes.
 - Do **not** assume cleanup is automatic — old anchors, runs, and outputs persist until
@@ -302,7 +320,7 @@ There are three ways to invoke `aikit`; pick the one that matches the context.
   invoke the installed binary directly, assuming it is on `PATH`:
 
   ```sh
-  aikit run script .aikit/temp/task.sh --require-clean --json
+  aikit script run .aikit/temp/task.sh --require-clean --json
   ```
 
   This is the pattern agents should use in real work.
@@ -312,7 +330,7 @@ There are three ways to invoke `aikit`; pick the one that matches the context.
   prefer the built executable directly:
 
   ```sh
-  ./target/debug/aikit run script .aikit/temp/task.sh --require-clean --json
+  ./target/debug/aikit script run .aikit/temp/task.sh --require-clean --json
   ```
 
 - **Development convenience (inside this repository only).** `cargo run -- ...` is a
@@ -320,10 +338,10 @@ There are three ways to invoke `aikit`; pick the one that matches the context.
   downstream usage pattern:
 
   ```sh
-  cargo run -- run script .aikit/temp/task.sh --require-clean --json
+  cargo run -- script run .aikit/temp/task.sh --require-clean --json
   ```
 
-  Note that `cargo run -- run script ...` is **not** a clean permission-consolidation
+  Note that `cargo run -- script run ...` is **not** a clean permission-consolidation
   test (see below): if the environment has already granted permission to run
   `cargo run`, the outer invocation is pre-approved and tells you nothing about prompt
   reduction. Agent-facing wrappers should prefer direct `aikit ...` invocation once the
@@ -333,7 +351,7 @@ There are three ways to invoke `aikit`; pick the one that matches the context.
 
 When an agent runs many local checks, each separate command may trigger its own
 approval prompt. The script runner can consolidate those into a single top-level
-invocation: the inner commands run as child processes of one `aikit run script` call
+invocation: the inner commands run as child processes of one `aikit script run` call
 rather than as separate tool calls.
 
 - **Goal:** reduce repeated per-command approval prompts by making exactly one
@@ -344,25 +362,25 @@ rather than as separate tool calls.
 - **Then invoke exactly one top-level command:**
 
   ```sh
-  aikit run script .aikit/temp/local-checks.sh --require-clean --json
+  aikit script run .aikit/temp/local-checks.sh --require-clean --json
   ```
 
   Inside this repository, before installation, the equivalent direct-binary form is:
 
   ```sh
-  ./target/debug/aikit run script .aikit/temp/local-checks.sh --require-clean --json
+  ./target/debug/aikit script run .aikit/temp/local-checks.sh --require-clean --json
   ```
 
-- **Do not** wrap `aikit run script` inside a larger shell batch when the goal is
+- **Do not** wrap `aikit script run` inside a larger shell batch when the goal is
   permission consolidation — that reintroduces the outer shell as the thing being
   approved.
 - **Do not** run setup commands, `--print`, output inspections, and verification
   commands as separate tool calls if the goal is to measure prompt reduction; put the
-  repeated commands in the script instead and make the single `aikit run script` call.
-- **Review or trust the script before running it.** `aikit run script` still does
+  repeated commands in the script instead and make the single `aikit script run` call.
+- **Review or trust the script before running it.** `aikit script run` still does
   **not** make a script safe and is **not** a security sandbox — consolidation is about
   fewer prompts, not about safety.
-- If the UI still prompts once for the single outer `aikit run script` call, that is
+- If the UI still prompts once for the single outer `aikit script run` call, that is
   expected; the goal is to avoid a prompt for every inner command.
 - Some environments do not expose permission-prompt behavior to the terminal. When that
   is the case, an agent should report only what it can actually observe (e.g. that the
@@ -384,15 +402,18 @@ aikit review generate --files README.md docs/aikit-cli-spec.md
 # Generate a review bundle from the changed-since-anchor set.
 aikit review generate --anchor .aikit/outputs/batches/<anchor-id>.json
 
+# Validate a script against the run policy without executing it (no run output).
+aikit script check .aikit/temp/task.sh --json
+
 # Validate and show a script's run plan without executing it.
-aikit run script .aikit/temp/task.sh --print
+aikit script run .aikit/temp/task.sh --print
 
 # Run a script and record the audit trail under an explicit output location.
-aikit run script .aikit/temp/task.sh --output .scratch/work/outputs/aikit
+aikit script run .aikit/temp/task.sh --output .scratch/work/outputs/aikit
 
 # Permission-consolidated: run many local checks via one top-level invocation
 # (the repeated commands live inside the script).
-aikit run script .aikit/temp/local-checks.sh --require-clean --json
+aikit script run .aikit/temp/local-checks.sh --require-clean --json
 ```
 
 See each command's `--help` for the full set of flags and behavior.

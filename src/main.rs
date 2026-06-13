@@ -13,11 +13,11 @@ mod output;
 mod policy;
 mod repo;
 mod review;
-mod run;
+mod script;
 
 use clap::Parser;
 
-use cli::{BatchCommand, Cli, Command, InventoryCommand, ReviewCommand, RunCommand};
+use cli::{BatchCommand, Cli, Command, InventoryCommand, ReviewCommand, ScriptCommand};
 use errors::AikitError;
 
 fn main() {
@@ -41,8 +41,9 @@ fn run(cli: Cli) -> Result<(), AikitError> {
         Command::Review(rev) => match rev.command {
             ReviewCommand::Generate(args) => review::generate(args),
         },
-        Command::Run(run_cli) => match run_cli.command {
-            RunCommand::Script(args) => run::script(args),
+        Command::Script(script_cli) => match script_cli.command {
+            ScriptCommand::Run(args) => script::run(args),
+            ScriptCommand::Check(args) => script::check(args),
         },
     }
 }

@@ -766,3 +766,62 @@ status for `docs/agent-usage.md` recorded in the historical Batch 1–5 deferred
 and the Batch 6 records above; those records are retained as history. All six initial
 implementation batches remain complete, and no further initial batch manifest updates
 are planned.
+
+## Post-Initial Command Shape — Slice 1
+
+After the initial six batches, an approved post-initial slice corrects the script
+command grammar. This is recorded here (not as a new initial batch). The six initial
+batches remain historical and complete.
+
+### Slice 1 scope (implemented)
+
+- Replace the verb-first `aikit run script <script-path>` with the noun-family / action
+  form:
+  - `aikit script run <script-path>` — preserves the previous run behavior;
+  - `aikit script check <script-path>` — validates a script against the same policy
+    without executing it and without creating any run output.
+- The old `aikit run script` command shape (and the top-level `aikit run`) is **removed,
+  not aliased**: there is exactly one public way to run a script (`aikit script run`).
+- The run-record format (`aikit.script_run` / run.json) is unchanged; `script check`
+  adds a new `aikit.script_check` report kind. No new runtime dependency.
+
+### Slice 1 expected committed files
+
+| Path | Classification | Purpose |
+|---|---|---|
+| `src/script.rs` | new (rename/refactor of `src/run.rs`) | `script run` + `script check`, sharing one validation path |
+| `src/run.rs` | removed | superseded by `src/script.rs` |
+| `src/main.rs` | modified | module + dispatch (`run` → `script`; `run`/`check` actions) |
+| `src/cli.rs` | modified | `Script`/`ScriptCommand::{Run,Check}` family; remove `Run`/`RunCommand` |
+| `src/formats.rs` | modified | add `ScriptCheck` + `aikit.script_check` kind |
+| `src/policy/script.rs` | modified (comment only) | existing policy reused by both actions; module doc comment updated to the new command name |
+| `src/errors.rs` | unchanged | existing blocked states reused |
+| `tests/cli_script.rs` | new (rename/refactor of `tests/cli_run_script.rs`) | `script run` + `script check` + removal tests |
+| `tests/cli_run_script.rs` | removed | superseded by `tests/cli_script.rs` |
+| `tests/cli_integration.rs` | modified | use `script run --print` instead of `run script --print` |
+| `README.md` | modified | `script run` / `script check` usage |
+| `docs/agent-usage.md` | modified | `script run` / `script check` across sections |
+| `docs/aikit-cli-spec.md` | modified | §5.1 corrected to the `script` family |
+| `docs/aikit-implementation-plan.md` | modified | §22 post-initial correction + approved slices |
+| `docs/implementation-manifest.md` | modified | this section |
+
+### Slice 1 expected-vs-actual
+
+To be confirmed against `git status` / `git diff` before commit: the committed set
+should match the table above (with `src/run.rs` → `src/script.rs` and
+`tests/cli_run_script.rs` → `tests/cli_script.rs` shown by Git as deletions + additions,
+which Git may report as renames). `Cargo.toml` / `Cargo.lock` are expected to be
+unchanged (no new dependency). `src/errors.rs` is expected to be unchanged (existing
+blocked states are reused); `src/policy/script.rs` is changed only by a doc-comment
+update to the new command name (its policy behavior is unchanged and is reused by both
+`script run` and `script check`). No ignored/local-only files are staged.
+
+### Future slices (approved direction, not implemented)
+
+Recorded as approved direction only; **not** implemented in Slice 1 (see the
+implementation plan §22.2). No separate roadmap document is created.
+
+- Slice 2: `aikit repo init`, `aikit repo doctor`.
+- Slice 3: `aikit output list`, `aikit output show`, `aikit output clean`.
+- Slice 4: `aikit batch list`, `aikit batch show`, `aikit diff anchor`.
+- Slice 5: `aikit env snapshot`, `aikit scan secrets`.

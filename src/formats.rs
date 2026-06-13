@@ -10,6 +10,7 @@ pub const KIND_BATCH_CHANGED: &str = "aikit.batch_changed";
 pub const KIND_REPO_INVENTORY: &str = "aikit.repo_inventory";
 pub const KIND_REVIEW_BUNDLE: &str = "aikit.review_bundle";
 pub const KIND_SCRIPT_RUN: &str = "aikit.script_run";
+pub const KIND_SCRIPT_CHECK: &str = "aikit.script_check";
 
 /// A point-in-time anchor written by `aikit batch start`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -167,7 +168,7 @@ pub struct ReviewTotals {
     pub bytes_included: u64,
 }
 
-/// The audit record written by `aikit run script` (run.json).
+/// The audit record written by `aikit script run` (run.json).
 #[derive(Debug, Serialize)]
 pub struct ScriptRun {
     pub schema_version: u32,
@@ -197,4 +198,32 @@ pub struct ScriptRun {
     pub blocked_state: Option<String>,
     pub stdout_path: Option<String>,
     pub stderr_path: Option<String>,
+}
+
+/// The report written to stdout by `aikit script check`. The command executes
+/// nothing and creates no run output, so `executed` and `output_created` are always
+/// false; `accepted` and `blocked_state` carry the policy verdict.
+#[derive(Debug, Serialize)]
+pub struct ScriptCheck {
+    pub schema_version: u32,
+    pub kind: String,
+    /// Repo root, or `null` when the repo could not be detected.
+    pub repo_root: Option<String>,
+    /// Repo-relative path when resolved, else the path as supplied on the command line.
+    pub script_path: String,
+    /// Real (canonicalized) path when resolution succeeded; `null` otherwise.
+    pub resolved_script_path: Option<String>,
+    /// Interpreter that would be used; `null` when extension/location was not accepted.
+    pub interpreter: Option<String>,
+    pub require_clean: bool,
+    pub allow_dirty: bool,
+    /// Always false — `script check` never executes the script.
+    pub executed: bool,
+    /// Always false — `script check` creates no run output.
+    pub output_created: bool,
+    pub accepted: bool,
+    /// Set when the policy blocked the script; `null` when accepted.
+    pub blocked_state: Option<String>,
+    /// Human-readable detail for a block; `null` when accepted.
+    pub detail: Option<String>,
 }

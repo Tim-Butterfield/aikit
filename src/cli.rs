@@ -81,23 +81,26 @@ aikit review generate --anchor .aikit/outputs/batches/<anchor-id>.json --json"
     )]
     Review(ReviewCli),
 
-    /// Run a local script under mechanical safety controls, with an audit record.
+    /// Validate and run local scripts under mechanical safety controls.
     #[command(
-        long_about = "Run a local script through a fixed interpreter and record an audit \
-trail. This is NOT a security sandbox: it reduces accidental unsafe execution but does not \
-make an arbitrary script safe.\n\n\
-Use `run script <script-path>`. The script must live under an allowed local work area \
-(.aikit/temp/, .scratch/work/temp/, or .scratch/work/outputs/) — those are input locations, \
-not output locations. Only `.zsh` (/bin/zsh) and `.sh` (/bin/sh) are supported; the \
-interpreter is chosen from the extension, never from a shebang. The run record \
-(copied script, stdout.txt, stderr.txt, run.json) is written under the default output \
-directory .aikit/outputs/runs/<id>/; override with --output <dir> (`.scratch` output is \
-used only when requested explicitly).",
+        long_about = "Validate and run local scripts under mechanical safety controls. This \
+is NOT a security sandbox: it reduces accidental unsafe execution but does not make an \
+arbitrary script safe.\n\n\
+`script run <script-path>` runs the script through a fixed interpreter and records an audit \
+trail; `script check <script-path>` applies the same policy but does not execute and writes \
+nothing. The script must live under an allowed local work area (.aikit/temp/, \
+.scratch/work/temp/, or .scratch/work/outputs/) — those are input locations, not output \
+locations. Only `.zsh` (/bin/zsh) and `.sh` (/bin/sh) are supported; the interpreter is \
+chosen from the extension, never from a shebang. For `script run`, the run record (copied \
+script, stdout.txt, stderr.txt, run.json) is written under the default output directory \
+.aikit/outputs/runs/<id>/; override with --output <dir> (`.scratch` output is used only \
+when requested explicitly).",
         after_help = "Examples:\n  \
-aikit run script .aikit/temp/build.sh\n  \
-aikit run script .scratch/work/temp/task.zsh --print"
+aikit script check .aikit/temp/build.sh\n  \
+aikit script run .aikit/temp/build.sh\n  \
+aikit script run .scratch/work/temp/task.zsh --print"
     )]
-    Run(RunCli),
+    Script(ScriptCli),
 }
 
 #[derive(Debug, Args)]
@@ -221,13 +224,13 @@ pub struct ReviewGenerateArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RunCli {
+pub struct ScriptCli {
     #[command(subcommand)]
-    pub command: RunCommand,
+    pub command: ScriptCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum RunCommand {
+pub enum ScriptCommand {
     /// Run a local script under mechanical safety controls (not a security sandbox).
     #[command(
         long_about = "Run a local script through a fixed interpreter and write an audit \
@@ -242,22 +245,44 @@ unknown-extension scripts are rejected.\n\n\
 Clean-tree policy: the default is allow-dirty (these scripts operate on working content). \
 `--require-clean` blocks when the tracked tree is dirty; `--allow-dirty` is the explicit \
 default; the two cannot be combined. With `--print`, policy is validated and the planned \
-command is shown but the script is not executed (recorded as executed: false).\n\n\
+command is shown but the script is not executed (recorded as executed: false). To validate \
+policy without running anything and without writing a run record, use `script check`.\n\n\
 On execution the script is copied into the run directory (retaining its extension), stdout \
 and stderr are captured to stdout.txt / stderr.txt, and run.json records the audit metadata. \
 Output is written under .aikit/outputs/runs/<id>/ by default; override with --output <dir> \
 (`.scratch` output only when requested explicitly). Created artifact paths are printed (and \
 included in --json). The executed script's exit code is propagated.",
         after_help = "Examples:\n  \
-aikit run script .aikit/temp/build.sh\n  \
-aikit run script .scratch/work/temp/task.zsh --print\n  \
-aikit run script .aikit/temp/check.sh --require-clean --json"
+aikit script run .aikit/temp/build.sh\n  \
+aikit script run .scratch/work/temp/task.zsh --print\n  \
+aikit script run .aikit/temp/check.sh --require-clean --json"
     )]
-    Script(RunScriptArgs),
+    Run(ScriptRunArgs),
+
+    /// Validate a local script against the run policy without executing it.
+    #[command(
+        long_about = "Validate a local script against the same policy `script run` uses, \
+without executing it and without writing any run output. NOTE: this is NOT a security \
+sandbox; it reports whether the mechanical policy accepts the script, not whether the \
+script is safe.\n\n\
+The <script-path> must resolve (after symlink resolution) to a real file under an allowed \
+local work area: .aikit/temp/, .scratch/work/temp/, or .scratch/work/outputs/. The check \
+validates the allowed location, the path/symlink boundary, the extension/interpreter \
+(`.zsh` → /bin/zsh, `.sh` → /bin/sh; extensionless/unknown rejected), the best-effort \
+forbidden-operation scan, and the clean-tree policy.\n\n\
+The script is never executed and never copied; no run directory, stdout.txt, stderr.txt, \
+or run.json is created. Exit 0 when the policy accepts the script, exit 3 with the named \
+blocked state when it does not, and exit 2 for invalid usage (e.g. --require-clean and \
+--allow-dirty together).",
+        after_help = "Examples:\n  \
+aikit script check .aikit/temp/build.sh\n  \
+aikit script check .aikit/temp/build.sh --require-clean --json"
+    )]
+    Check(ScriptCheckArgs),
 }
 
 #[derive(Debug, Args)]
-pub struct RunScriptArgs {
+pub struct ScriptRunArgs {
     /// Path to the script to run; must be under an allowed local work area.
     #[arg(value_name = "SCRIPT_PATH")]
     pub script: String,
@@ -279,6 +304,25 @@ pub struct RunScriptArgs {
     pub output: Option<String>,
 
     /// Print the machine-readable run record (run.json) to stdout in addition to writing it.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ScriptCheckArgs {
+    /// Path to the script to validate; must be under an allowed local work area.
+    #[arg(value_name = "SCRIPT_PATH")]
+    pub script: String,
+
+    /// Block when the tracked working tree is dirty (mutually exclusive with --allow-dirty).
+    #[arg(long, conflicts_with = "allow_dirty")]
+    pub require_clean: bool,
+
+    /// Permit a dirty tracked working tree (this is the default when neither flag is given).
+    #[arg(long)]
+    pub allow_dirty: bool,
+
+    /// Print the machine-readable check record to stdout instead of human-readable text.
     #[arg(long)]
     pub json: bool,
 }

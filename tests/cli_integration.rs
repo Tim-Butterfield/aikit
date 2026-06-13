@@ -1,13 +1,13 @@
 //! End-to-end integration test for the local `aikit` workflow.
 //!
 //! Each command family has its own focused test file (cli_batch, cli_inventory,
-//! cli_review, cli_run_script). This file is the Batch 6 integration check: it
-//! exercises the intended local workflow as a single chained sequence in one
-//! throwaway Git repo — anchor → change → list-changed → inventory → review →
-//! print a governed run plan — and verifies the artifacts/metadata line up across
-//! commands. It is deliberately deterministic: it changes a *tracked* file (so
-//! detection is via `git status`, not the mtime heuristic) and uses `run script
-//! --print` (so no interpreter is actually invoked).
+//! cli_review, cli_script). This file is the integration check: it exercises the
+//! intended local workflow as a single chained sequence in one throwaway Git repo —
+//! anchor → change → list-changed → inventory → review → print a governed run plan —
+//! and verifies the artifacts/metadata line up across commands. It is deliberately
+//! deterministic: it changes a *tracked* file (so detection is via `git status`, not
+//! the mtime heuristic) and uses `script run --print` (so no interpreter is actually
+//! invoked).
 
 use std::fs;
 use std::path::Path;
@@ -160,7 +160,7 @@ fn local_workflow_end_to_end() {
     )
     .unwrap();
 
-    let plan = aikit_json(p, &["run", "script", ".aikit/temp/task.sh", "--print"]);
+    let plan = aikit_json(p, &["script", "run", ".aikit/temp/task.sh", "--print"]);
     assert_eq!(plan["kind"], "aikit.script_run");
     assert_eq!(
         plan["executed"], false,

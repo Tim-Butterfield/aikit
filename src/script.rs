@@ -1,12 +1,14 @@
-//! `aikit run script <script-path>` — governed local script execution.
+//! `aikit script run` / `aikit script check` — governed local script handling.
 //!
-//! This is a mechanical guard, NOT a security sandbox. It resolves the script under
-//! an allowed local work area (canonicalized; symlink escapes rejected), selects the
-//! interpreter from the extension (never a shebang), runs a best-effort
-//! forbidden-operation scan, applies the clean-tree policy, then either prints the
-//! plan (`--print`) or executes through the interpreter and records an audit trail
-//! (copied script, stdout.txt, stderr.txt, run.json). The executed script's exit
-//! code is propagated.
+//! This is a mechanical guard, NOT a security sandbox. Both subcommands share one
+//! validation path: resolve the script under an allowed local work area
+//! (canonicalized; symlink escapes rejected), select the interpreter from the
+//! extension (never a shebang), run a best-effort forbidden-operation scan, and
+//! apply the clean-tree policy. `script run` then either prints the plan (`--print`)
+//! or executes through the interpreter and records an audit trail (copied script,
+//! stdout.txt, stderr.txt, run.json), propagating the script's exit code.
+//! `script check` stops after validation and writes nothing — it only reports whether
+//! the policy accepts the script.
 
 use std::fs::{self, File};
 use std::io::Write;
@@ -18,9 +20,9 @@ use time::format_description::FormatItem;
 use time::macros::format_description;
 use time::OffsetDateTime;
 
-use crate::cli::RunScriptArgs;
+use crate::cli::{ScriptCheckArgs, ScriptRunArgs};
 use crate::errors::{blocked, AikitError};
-use crate::formats::{ScriptRun, KIND_SCRIPT_RUN, SCHEMA_VERSION};
+use crate::formats::{ScriptCheck, ScriptRun, KIND_SCRIPT_CHECK, KIND_SCRIPT_RUN, SCHEMA_VERSION};
 use crate::policy::script as policy;
 use crate::{output, repo};
 
@@ -34,24 +36,44 @@ const STDERR_NAME: &str = "stderr.txt";
 const RUN_RECORD_NAME: &str = "run.json";
 
 const SANDBOX_NOTE: &str =
-    "aikit run script is NOT a security sandbox. The forbidden-operation scan is \
+    "aikit script run is NOT a security sandbox. The forbidden-operation scan is \
 best-effort and easily bypassed; the allowed-location policy is the primary control. \
 Running a script here does not make it safe.";
 
-pub fn script(args: RunScriptArgs) -> Result<(), AikitError> {
+/// A script that passed location/extension resolution: its repo-relative path, real
+/// canonical path, and the interpreter chosen from its extension.
+struct Resolved {
+    root: PathBuf,
+    rel: String,
+    real: PathBuf,
+    interpreter: &'static str,
+}
+
+/// Phase 1 of the shared validation: detect the repo, resolve + canonicalize the
+/// script path, reject repo/allowlist escapes, and pick the interpreter from the
+/// extension. Does not read or scan the script content.
+fn resolve_and_locate(input: &str) -> Result<Resolved, AikitError> {
     let root = repo::detect_root()?;
     let root_canon = fs::canonicalize(&root)
         .map_err(|e| AikitError::other(format!("failed to resolve repo root: {e}")))?;
-
-    // Resolve + validate the script path (canonicalize; in-repo; allowed location).
-    let (rel, real) = resolve_script_path(&root_canon, &args.script)?;
+    let (rel, real) = resolve_script_path(&root_canon, input)?;
     let interpreter = policy::interpreter_for(&rel)?;
+    Ok(Resolved {
+        root,
+        rel,
+        real,
+        interpreter,
+    })
+}
 
-    // Best-effort forbidden-operation scan over the script content.
-    let content = fs::read(&real).map_err(|_| {
+/// Phase 2 of the shared validation: read the script, run the best-effort
+/// forbidden-operation scan, and apply the clean-tree policy. Returns the script
+/// bytes on success (the caller computes a hash / copies as needed).
+fn scan_and_check_clean(resolved: &Resolved, require_clean: bool) -> Result<Vec<u8>, AikitError> {
+    let content = fs::read(&resolved.real).map_err(|_| {
         AikitError::blocked(
             blocked::UNREADABLE_FILE,
-            format!("script could not be read: {}", args.script),
+            format!("script could not be read: {}", resolved.rel),
         )
     })?;
     let content_str = String::from_utf8_lossy(&content);
@@ -64,15 +86,29 @@ not a security check — refusing to run"
             ),
         ));
     }
-
     // Clean-tree policy. Default is allow-dirty; --require-clean blocks a dirty
     // tracked tree. (--require-clean / --allow-dirty are mutually exclusive in clap.)
-    if args.require_clean && repo::is_tracked_tree_dirty(&root) {
+    if require_clean && repo::is_tracked_tree_dirty(&resolved.root) {
         return Err(AikitError::blocked(
             blocked::DIRTY_TREE,
             "tracked working tree is dirty and --require-clean was given",
         ));
     }
+    Ok(content)
+}
+
+/// `aikit script run <script-path>` — validate, then print the plan (`--print`) or
+/// execute and record an audit trail. The script's exit code is propagated.
+pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
+    let resolved = resolve_and_locate(&args.script)?;
+    let content = scan_and_check_clean(&resolved, args.require_clean)?;
+
+    let Resolved {
+        root,
+        rel,
+        real,
+        interpreter,
+    } = resolved;
 
     let script_sha256 = sha256_bytes(&content);
     let ext = Path::new(&rel)
@@ -233,6 +269,133 @@ not a security check — refusing to run"
     // the normal runtime flush.
     std::io::stdout().flush().ok();
     std::process::exit(exit_code);
+}
+
+/// `aikit script check <script-path>` — apply the same run policy without executing.
+/// Writes no run directory, copied script, stdout/stderr, or run.json. Exits 0 when
+/// the policy accepts the script and 3 (with the blocked state) when it does not.
+pub fn check(args: ScriptCheckArgs) -> Result<(), AikitError> {
+    let require_clean = args.require_clean;
+
+    let resolved = match resolve_and_locate(&args.script) {
+        Ok(r) => r,
+        Err(AikitError::Blocked { state, message }) => {
+            // Blocked before the interpreter/real path were known.
+            let record = build_check(
+                None,
+                args.script.clone(),
+                None,
+                None,
+                require_clean,
+                false,
+                Some(state.to_string()),
+                Some(message),
+            );
+            emit_check(&record, args.json);
+            std::io::stdout().flush().ok();
+            std::process::exit(3);
+        }
+        Err(other) => return Err(other),
+    };
+
+    match scan_and_check_clean(&resolved, require_clean) {
+        Ok(_) => {
+            let record = build_check(
+                Some(resolved.root.display().to_string()),
+                resolved.rel.clone(),
+                Some(display_relative(&resolved.root, &resolved.real)),
+                Some(resolved.interpreter.to_string()),
+                require_clean,
+                true,
+                None,
+                None,
+            );
+            emit_check(&record, args.json);
+            Ok(())
+        }
+        Err(AikitError::Blocked { state, message }) => {
+            let record = build_check(
+                Some(resolved.root.display().to_string()),
+                resolved.rel.clone(),
+                Some(display_relative(&resolved.root, &resolved.real)),
+                Some(resolved.interpreter.to_string()),
+                require_clean,
+                false,
+                Some(state.to_string()),
+                Some(message),
+            );
+            emit_check(&record, args.json);
+            std::io::stdout().flush().ok();
+            std::process::exit(3);
+        }
+        Err(other) => Err(other),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_check(
+    repo_root: Option<String>,
+    script_path: String,
+    resolved_script_path: Option<String>,
+    interpreter: Option<String>,
+    require_clean: bool,
+    accepted: bool,
+    blocked_state: Option<String>,
+    detail: Option<String>,
+) -> ScriptCheck {
+    ScriptCheck {
+        schema_version: SCHEMA_VERSION,
+        kind: KIND_SCRIPT_CHECK.to_string(),
+        repo_root,
+        script_path,
+        resolved_script_path,
+        interpreter,
+        require_clean,
+        allow_dirty: !require_clean,
+        executed: false,
+        output_created: false,
+        accepted,
+        blocked_state,
+        detail,
+    }
+}
+
+/// Print a check record as JSON or human-readable text.
+fn emit_check(record: &ScriptCheck, json: bool) {
+    if json {
+        match serde_json::to_string_pretty(record) {
+            Ok(s) => println!("{s}"),
+            Err(e) => eprintln!("error: failed to serialize check record: {e}"),
+        }
+        return;
+    }
+    if record.accepted {
+        println!("Script check: ACCEPTED (not executed)");
+    } else {
+        println!("Script check: BLOCKED (not executed)");
+    }
+    println!("  script: {}", record.script_path);
+    if let Some(resolved) = &record.resolved_script_path {
+        println!("  resolved: {resolved}");
+    }
+    match &record.interpreter {
+        Some(i) => println!("  interpreter: {i}"),
+        None => println!("  interpreter: (not resolved)"),
+    }
+    println!(
+        "  require_clean: {} (allow_dirty: {})",
+        record.require_clean, record.allow_dirty
+    );
+    if record.accepted {
+        println!("  forbidden-operation scan: passed");
+    } else if let Some(state) = &record.blocked_state {
+        println!("  blocked_state: {state}");
+        if let Some(detail) = &record.detail {
+            println!("  detail: {detail}");
+        }
+    }
+    println!("  no run output created");
+    println!("note: {SANDBOX_NOTE}");
 }
 
 /// Resolve a script path to `(repo-relative, real absolute)`, rejecting missing

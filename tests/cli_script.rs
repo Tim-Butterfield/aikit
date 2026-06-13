@@ -1,9 +1,10 @@
-//! Integration tests for `aikit run script` (the governed script runner).
+//! Integration tests for the `aikit script` command family (`script run` /
+//! `script check`) and for the removal of the old `aikit run script` shape.
 //!
 //! Scripts used here are harmless (echo / write a marker / exit with a code).
 //! Forbidden-operation cases use static fixture text that is blocked *before*
 //! execution. Each test builds a throwaway Git repo and runs the compiled binary
-//! inside it. Coverage maps to the Batch 5 manifest's test expectations.
+//! inside it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -64,21 +65,45 @@ fn find_run_dir(repo: &Path, base_rel: &str) -> PathBuf {
     entry.path()
 }
 
-// ---- help ----
+// ---- removal of the old `run` command shape ----
 
 #[test]
-fn run_help_is_available() {
+fn old_run_command_is_unavailable() {
+    // `aikit run --help` must be invalid usage now that `run` no longer exists.
     AssertCommand::new(cargo_bin("aikit"))
         .args(["run", "--help"])
         .assert()
-        .success()
-        .stdout(predicates::str::contains("script"));
+        .failure()
+        .code(2);
 }
 
 #[test]
-fn run_script_help_states_not_a_sandbox() {
+fn old_run_script_shape_is_invalid_usage() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
+    aikit(repo.path())
+        .args(["run", "script", ".aikit/temp/h.sh"])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+// ---- help ----
+
+#[test]
+fn script_help_is_available() {
     AssertCommand::new(cargo_bin("aikit"))
-        .args(["run", "script", "--help"])
+        .args(["script", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("run"))
+        .stdout(predicates::str::contains("check"));
+}
+
+#[test]
+fn script_run_help_states_not_a_sandbox() {
+    AssertCommand::new(cargo_bin("aikit"))
+        .args(["script", "run", "--help"])
         .assert()
         .success()
         .stdout(predicates::str::contains("--print"))
@@ -86,16 +111,26 @@ fn run_script_help_states_not_a_sandbox() {
         .stdout(predicates::str::contains("NOT a security sandbox"));
 }
 
-// ---- path / location / interpreter policy ----
+#[test]
+fn script_check_help_states_not_a_sandbox() {
+    AssertCommand::new(cargo_bin("aikit"))
+        .args(["script", "check", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--require-clean"))
+        .stdout(predicates::str::contains("NOT a security sandbox"));
+}
+
+// ---- script run: path / location / interpreter policy ----
 
 #[test]
-fn script_outside_repo_is_rejected() {
+fn run_script_outside_repo_is_rejected() {
     let repo = init_repo();
     let outside = TempDir::new().unwrap();
     let script = outside.path().join("x.sh");
     fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
     aikit(repo.path())
-        .args(["run", "script", script.to_str().unwrap()])
+        .args(["script", "run", script.to_str().unwrap()])
         .assert()
         .failure()
         .code(3)
@@ -103,11 +138,11 @@ fn script_outside_repo_is_rejected() {
 }
 
 #[test]
-fn script_outside_allowed_locations_is_rejected() {
+fn run_script_outside_allowed_locations_is_rejected() {
     let repo = init_repo();
     write_script(repo.path(), "tools/build.sh", "#!/bin/sh\necho hi\n");
     aikit(repo.path())
-        .args(["run", "script", "tools/build.sh"])
+        .args(["script", "run", "tools/build.sh"])
         .assert()
         .failure()
         .code(3)
@@ -116,7 +151,7 @@ fn script_outside_allowed_locations_is_rejected() {
 
 #[cfg(unix)]
 #[test]
-fn symlinked_script_escaping_repo_is_rejected() {
+fn run_symlinked_script_escaping_repo_is_rejected() {
     use std::os::unix::fs::symlink;
     let repo = init_repo();
     let outside = TempDir::new().unwrap();
@@ -125,7 +160,7 @@ fn symlinked_script_escaping_repo_is_rejected() {
     fs::create_dir_all(repo.path().join(".aikit/temp")).unwrap();
     symlink(&target, repo.path().join(".aikit/temp/link.sh")).unwrap();
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/link.sh"])
+        .args(["script", "run", ".aikit/temp/link.sh"])
         .assert()
         .failure()
         .code(3)
@@ -134,10 +169,9 @@ fn symlinked_script_escaping_repo_is_rejected() {
 
 #[cfg(unix)]
 #[test]
-fn symlinked_script_to_in_repo_outside_allowlist_is_rejected() {
+fn run_symlinked_script_to_in_repo_outside_allowlist_is_rejected() {
     use std::os::unix::fs::symlink;
     let repo = init_repo();
-    // A real in-repo script, but outside the allowed input locations.
     write_script(repo.path(), "tools/real.sh", "#!/bin/sh\necho hi\n");
     fs::create_dir_all(repo.path().join(".aikit/temp")).unwrap();
     symlink(
@@ -146,7 +180,7 @@ fn symlinked_script_to_in_repo_outside_allowlist_is_rejected() {
     )
     .unwrap();
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/link.sh"])
+        .args(["script", "run", ".aikit/temp/link.sh"])
         .assert()
         .failure()
         .code(3)
@@ -158,11 +192,11 @@ fn symlinked_script_to_in_repo_outside_allowlist_is_rejected() {
 }
 
 #[test]
-fn extensionless_script_is_rejected() {
+fn run_extensionless_script_is_rejected() {
     let repo = init_repo();
     write_script(repo.path(), ".aikit/temp/noext", "echo hi\n");
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/noext"])
+        .args(["script", "run", ".aikit/temp/noext"])
         .assert()
         .failure()
         .code(3)
@@ -170,11 +204,11 @@ fn extensionless_script_is_rejected() {
 }
 
 #[test]
-fn unknown_extension_script_is_rejected() {
+fn run_unknown_extension_script_is_rejected() {
     let repo = init_repo();
     write_script(repo.path(), ".aikit/temp/x.py", "print('hi')\n");
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/x.py"])
+        .args(["script", "run", ".aikit/temp/x.py"])
         .assert()
         .failure()
         .code(3)
@@ -182,11 +216,11 @@ fn unknown_extension_script_is_rejected() {
 }
 
 #[test]
-fn sh_script_runs_through_bin_sh() {
+fn run_sh_script_runs_through_bin_sh() {
     let repo = init_repo();
     write_script(repo.path(), ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/h.sh"])
+        .args(["script", "run", ".aikit/temp/h.sh"])
         .assert()
         .success();
     let dir = find_run_dir(repo.path(), ".aikit/outputs/runs");
@@ -197,14 +231,14 @@ fn sh_script_runs_through_bin_sh() {
 }
 
 #[test]
-fn zsh_script_runs_through_bin_zsh() {
+fn run_zsh_script_runs_through_bin_zsh() {
     if !Path::new("/bin/zsh").exists() {
         return; // /bin/zsh is not present on this host; skip.
     }
     let repo = init_repo();
     write_script(repo.path(), ".aikit/temp/h.zsh", "echo hi\n");
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/h.zsh"])
+        .args(["script", "run", ".aikit/temp/h.zsh"])
         .assert()
         .success();
     let dir = find_run_dir(repo.path(), ".aikit/outputs/runs");
@@ -213,10 +247,10 @@ fn zsh_script_runs_through_bin_zsh() {
     assert_eq!(json["interpreter"], "/bin/zsh");
 }
 
-// ---- print / clean-tree ----
+// ---- script run: print / clean-tree ----
 
 #[test]
-fn print_does_not_execute_and_reports_not_executed() {
+fn run_print_does_not_execute_and_reports_not_executed() {
     let repo = init_repo();
     write_script(
         repo.path(),
@@ -225,8 +259,8 @@ fn print_does_not_execute_and_reports_not_executed() {
     );
     let out = aikit(repo.path())
         .args([
-            "run",
             "script",
+            "run",
             ".aikit/temp/marker.sh",
             "--print",
             "--json",
@@ -239,7 +273,6 @@ fn print_does_not_execute_and_reports_not_executed() {
     let json: Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(json["executed"], false);
     assert!(json["exit_code"].is_null());
-    // The script must not have run, and no run directory should be created.
     assert!(
         !repo.path().join("did-run").exists(),
         "--print must not execute"
@@ -251,13 +284,12 @@ fn print_does_not_execute_and_reports_not_executed() {
 }
 
 #[test]
-fn default_policy_is_allow_dirty() {
+fn run_default_policy_is_allow_dirty() {
     let repo = init_repo();
-    // Dirty the tracked tree.
     fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
     write_script(repo.path(), ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
     let out = aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/h.sh", "--json"])
+        .args(["script", "run", ".aikit/temp/h.sh", "--json"])
         .assert()
         .success()
         .get_output()
@@ -270,12 +302,12 @@ fn default_policy_is_allow_dirty() {
 }
 
 #[test]
-fn require_clean_blocks_dirty_tree() {
+fn run_require_clean_blocks_dirty_tree() {
     let repo = init_repo();
     fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
     write_script(repo.path(), ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/h.sh", "--require-clean"])
+        .args(["script", "run", ".aikit/temp/h.sh", "--require-clean"])
         .assert()
         .failure()
         .code(3)
@@ -283,24 +315,24 @@ fn require_clean_blocks_dirty_tree() {
 }
 
 #[test]
-fn allow_dirty_permits_dirty_tree() {
+fn run_allow_dirty_permits_dirty_tree() {
     let repo = init_repo();
     fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
     write_script(repo.path(), ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/h.sh", "--allow-dirty"])
+        .args(["script", "run", ".aikit/temp/h.sh", "--allow-dirty"])
         .assert()
         .success();
 }
 
 #[test]
-fn require_clean_and_allow_dirty_together_is_invalid_usage() {
+fn run_require_clean_and_allow_dirty_together_is_invalid_usage() {
     let repo = init_repo();
     write_script(repo.path(), ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
     aikit(repo.path())
         .args([
-            "run",
             "script",
+            "run",
             ".aikit/temp/h.sh",
             "--require-clean",
             "--allow-dirty",
@@ -310,10 +342,10 @@ fn require_clean_and_allow_dirty_together_is_invalid_usage() {
         .code(2);
 }
 
-// ---- forbidden scan ----
+// ---- script run: forbidden scan ----
 
 #[test]
-fn forbidden_operation_is_blocked_before_execution() {
+fn run_forbidden_operation_is_blocked_before_execution() {
     let repo = init_repo();
     write_script(
         repo.path(),
@@ -321,7 +353,7 @@ fn forbidden_operation_is_blocked_before_execution() {
         "#!/bin/sh\ntouch did-run\ngit push origin main\n",
     );
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/bad.sh"])
+        .args(["script", "run", ".aikit/temp/bad.sh"])
         .assert()
         .failure()
         .code(3)
@@ -332,10 +364,10 @@ fn forbidden_operation_is_blocked_before_execution() {
     );
 }
 
-// ---- capture / metadata / exit code ----
+// ---- script run: capture / metadata / exit code ----
 
 #[test]
-fn captures_stdout_stderr_and_writes_run_json_with_metadata() {
+fn run_captures_stdout_stderr_and_writes_run_json_with_metadata() {
     let repo = init_repo();
     write_script(
         repo.path(),
@@ -343,7 +375,7 @@ fn captures_stdout_stderr_and_writes_run_json_with_metadata() {
         "#!/bin/sh\necho to-out\necho to-err 1>&2\n",
     );
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/io.sh"])
+        .args(["script", "run", ".aikit/temp/io.sh"])
         .assert()
         .success();
     let dir = find_run_dir(repo.path(), ".aikit/outputs/runs");
@@ -392,23 +424,23 @@ fn captures_stdout_stderr_and_writes_run_json_with_metadata() {
 }
 
 #[test]
-fn executed_script_exit_code_is_propagated() {
+fn run_executed_script_exit_code_is_propagated() {
     let repo = init_repo();
     write_script(repo.path(), ".aikit/temp/seven.sh", "#!/bin/sh\nexit 7\n");
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/seven.sh"])
+        .args(["script", "run", ".aikit/temp/seven.sh"])
         .assert()
         .code(7);
 }
 
-// ---- output location ----
+// ---- script run: output location ----
 
 #[test]
-fn default_output_goes_to_aikit_outputs_runs() {
+fn run_default_output_goes_to_aikit_outputs_runs() {
     let repo = init_repo();
     write_script(repo.path(), ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/h.sh"])
+        .args(["script", "run", ".aikit/temp/h.sh"])
         .assert()
         .success()
         .stdout(predicates::str::contains(".aikit/outputs/runs/"));
@@ -416,13 +448,13 @@ fn default_output_goes_to_aikit_outputs_runs() {
 }
 
 #[test]
-fn output_override_uses_scratch_when_requested() {
+fn run_output_override_uses_scratch_when_requested() {
     let repo = init_repo();
     write_script(repo.path(), ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
     aikit(repo.path())
         .args([
-            "run",
             "script",
+            "run",
             ".aikit/temp/h.sh",
             "--output",
             ".scratch/work/outputs/aikit",
@@ -442,16 +474,193 @@ fn output_override_uses_scratch_when_requested() {
 }
 
 #[test]
-fn copied_script_retains_extension() {
+fn run_copied_script_retains_extension() {
     if !Path::new("/bin/zsh").exists() {
         return; // /bin/zsh is not present on this host; skip.
     }
     let repo = init_repo();
     write_script(repo.path(), ".aikit/temp/h.zsh", "echo hi\n");
     aikit(repo.path())
-        .args(["run", "script", ".aikit/temp/h.zsh"])
+        .args(["script", "run", ".aikit/temp/h.zsh"])
         .assert()
         .success();
     let dir = find_run_dir(repo.path(), ".aikit/outputs/runs");
     assert!(dir.join("script.zsh").is_file(), "copied script keeps .zsh");
+}
+
+// ---- script check ----
+
+/// Run `script check ... --json` and parse the report.
+fn check_json(repo: &Path, args: &[&str]) -> (i32, Value) {
+    let mut full = vec!["script", "check"];
+    full.extend_from_slice(args);
+    full.push("--json");
+    let output = aikit(repo).args(&full).assert().get_output().clone();
+    let code = output.status.code().unwrap_or(-1);
+    let json: Value = serde_json::from_slice(&output.stdout).expect("check stdout is JSON");
+    (code, json)
+}
+
+#[test]
+fn check_accepts_valid_sh_script() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/ok.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/ok.sh"]);
+    assert_eq!(code, 0);
+    assert_eq!(json["kind"], "aikit.script_check");
+    assert_eq!(json["accepted"], true);
+    assert_eq!(json["executed"], false);
+    assert_eq!(json["output_created"], false);
+    assert_eq!(json["interpreter"], "/bin/sh");
+    assert!(json["blocked_state"].is_null());
+    // No run output of any kind.
+    assert!(
+        !repo.path().join(".aikit/outputs/runs").exists(),
+        "check must not create a run directory"
+    );
+}
+
+#[test]
+fn check_accepts_valid_zsh_script_without_executing() {
+    // `script check` resolves the interpreter from the extension but never runs it,
+    // so this passes even where /bin/zsh is absent.
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/ok.zsh", "echo hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/ok.zsh"]);
+    assert_eq!(code, 0);
+    assert_eq!(json["accepted"], true);
+    assert_eq!(json["interpreter"], "/bin/zsh");
+}
+
+#[test]
+fn check_rejects_script_outside_allowed_locations() {
+    let repo = init_repo();
+    write_script(repo.path(), "tools/build.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &["tools/build.sh"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["accepted"], false);
+    assert_eq!(json["blocked_state"], "blocked_script_not_allowed");
+}
+
+#[test]
+fn check_rejects_script_outside_repo() {
+    let repo = init_repo();
+    let outside = TempDir::new().unwrap();
+    let script = outside.path().join("x.sh");
+    fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+    let (code, json) = check_json(repo.path(), &[script.to_str().unwrap()]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_path_escape");
+}
+
+#[cfg(unix)]
+#[test]
+fn check_rejects_symlink_escape() {
+    use std::os::unix::fs::symlink;
+    let repo = init_repo();
+    let outside = TempDir::new().unwrap();
+    let target = outside.path().join("evil.sh");
+    fs::write(&target, "#!/bin/sh\necho hi\n").unwrap();
+    fs::create_dir_all(repo.path().join(".aikit/temp")).unwrap();
+    symlink(&target, repo.path().join(".aikit/temp/link.sh")).unwrap();
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/link.sh"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_path_escape");
+}
+
+#[test]
+fn check_rejects_extensionless_script() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/noext", "echo hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/noext"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_unsupported_mode");
+}
+
+#[test]
+fn check_rejects_unknown_extension() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/x.py", "print('hi')\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.py"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_unsupported_mode");
+}
+
+#[test]
+fn check_blocks_forbidden_operation_text() {
+    let repo = init_repo();
+    write_script(
+        repo.path(),
+        ".aikit/temp/bad.sh",
+        "#!/bin/sh\ngit push origin main\n",
+    );
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/bad.sh"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_forbidden_operation");
+    // Even on a forbidden-op block the interpreter/resolution were known.
+    assert_eq!(json["interpreter"], "/bin/sh");
+}
+
+#[test]
+fn check_require_clean_blocks_dirty_tree() {
+    let repo = init_repo();
+    fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
+    write_script(repo.path(), ".aikit/temp/ok.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/ok.sh", "--require-clean"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_dirty_tree");
+    assert_eq!(json["require_clean"], true);
+}
+
+#[test]
+fn check_default_policy_is_allow_dirty() {
+    let repo = init_repo();
+    fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
+    write_script(repo.path(), ".aikit/temp/ok.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/ok.sh"]);
+    assert_eq!(code, 0);
+    assert_eq!(json["accepted"], true);
+    assert_eq!(json["require_clean"], false);
+    assert_eq!(json["allow_dirty"], true);
+}
+
+#[test]
+fn check_require_clean_and_allow_dirty_together_is_invalid_usage() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/ok.sh", "#!/bin/sh\necho hi\n");
+    aikit(repo.path())
+        .args([
+            "script",
+            "check",
+            ".aikit/temp/ok.sh",
+            "--require-clean",
+            "--allow-dirty",
+        ])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn check_does_not_execute_or_create_run_output() {
+    let repo = init_repo();
+    write_script(
+        repo.path(),
+        ".aikit/temp/marker.sh",
+        "#!/bin/sh\ntouch did-run\n",
+    );
+    aikit(repo.path())
+        .args(["script", "check", ".aikit/temp/marker.sh"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("ACCEPTED"))
+        .stdout(predicates::str::contains("not executed"));
+    assert!(
+        !repo.path().join("did-run").exists(),
+        "check must not execute the script"
+    );
+    assert!(
+        !repo.path().join(".aikit/outputs").exists(),
+        "check must not create any run output"
+    );
 }

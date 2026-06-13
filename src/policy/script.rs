@@ -5,7 +5,7 @@
 //! substring matching — trivially evaded (aliases, variables, whitespace, encoding)
 //! and prone to false positives. The allowed-location allowlist is the primary
 //! control; the scan only guards against obvious accidental mistakes. Running a
-//! script through `aikit run script` does not make it safe.
+//! script through `aikit script run` does not make it safe.
 
 use std::path::Path;
 
