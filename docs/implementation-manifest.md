@@ -11,9 +11,10 @@
 ## 2. Status
 
 - Batch 1 is complete and committed.
-- Current manifest scope: Batch 2.
-- Batch 2 has not yet been implemented.
-- This Batch 2 manifest update is expected to be reviewed before source changes for Batch 2 begin, and should not be committed until reviewed.
+- Batch 2 is complete and committed.
+- Current manifest scope: Batch 3.
+- Batch 3 has not yet been implemented.
+- This Batch 3 manifest update is expected to be reviewed before source changes for Batch 3 begin, and should not be committed until reviewed.
 
 ## 3. Classification Values
 
@@ -123,35 +124,32 @@ Before committing Batch 1 implementation, produce an expected-vs-actual file rep
 - unexpected files removed or justified;
 - final list of staged files.
 
-## Batch 2 Scope
+## Batch 2 Completed Scope
 
-Batch 2 should:
+Batch 2 is complete and committed. It delivered:
 
-- implement ignore-aware file walking;
-- implement SHA-256 hashing for inventory entries;
-- implement `aikit inventory repo`;
-- implement inventory JSON output;
-- implement inventory text output;
-- implement deterministic file ordering;
-- support `--output <path>`;
-- support `--json`;
-- support `--include-ignored`;
-- support `--max-files <n>`;
-- exclude `.git/` always;
-- exclude default build/dependency/output directories by directory-only rules;
-- update README usage documentation for inventory;
-- add tests for inventory behavior;
-- compare actual files to this manifest before commit.
+- `aikit inventory repo`;
+- ignore-aware traversal;
+- directory-only exclusions;
+- deterministic repo-relative ordering;
+- SHA-256 file hashing;
+- JSON and text inventory output;
+- `--json`;
+- `--output <path>`;
+- `--include-ignored`;
+- `--max-files <n>`;
+- inventory help surfaces (`aikit inventory --help`, `aikit inventory repo --help`);
+- inventory tests;
+- README usage update.
 
-Batch 2 must not:
+Known Batch 2 expected-vs-actual deviations:
 
-- implement `aikit review generate`;
-- implement `aikit run script`;
-- create agent skills;
-- create release automation;
-- push to remote.
+- `src/main.rs` was modified for inventory command wiring even though it was not listed in the Batch 2 expected file table.
+- `src/errors.rs` was not modified because no inventory-specific error expansion was needed.
 
-## Batch 2 Expected Committed Files
+The tables below are retained as the historical Batch 2 manifest record.
+
+## Batch 2 Expected Committed Files - Completed
 
 | Path | Classification | Purpose | Notes |
 |---|---|---|---|
@@ -165,7 +163,7 @@ Batch 2 must not:
 | `Cargo.toml` | modified | Add any dependency needed for Batch 2 if not already present | Only add dependencies if actually needed |
 | `Cargo.lock` | modified | Reflect dependency graph changes if Cargo.toml changes | No manual editing |
 
-## Batch 2 Expected Generated or Local-Only Files
+## Batch 2 Expected Generated or Local-Only Files - Completed
 
 | Path / Pattern | Classification | Purpose | Commit Policy |
 |---|---|---|---|
@@ -175,7 +173,7 @@ Batch 2 must not:
 | `.aikit/outputs/inventory/` | local-only | Fallback inventory output when a consuming repo lacks `.scratch/work/outputs/` | Never commit |
 | `.scratch/work/outputs/aikit/inventory/` | local-only | Preferred inventory output when the consuming repo has `.scratch/work/outputs/` | Never commit |
 
-## Batch 2 Deferred Files
+## Batch 2 Deferred Files - Completed
 
 | Path / Area | Classification | Reason Deferred |
 |---|---|---|
@@ -185,7 +183,7 @@ Batch 2 must not:
 | `docs/agent-usage.md` | deferred | Optional future documentation only |
 | `.github/workflows/` | deferred | Release/CI automation deferred |
 
-## Batch 2 Help Text Expectations
+## Batch 2 Help Text Expectations - Completed
 
 Batch 2 must provide useful help for:
 
@@ -202,7 +200,7 @@ For each help surface, require:
 - ignored-file behavior;
 - short example where useful.
 
-## Batch 2 Test Expectations
+## Batch 2 Test Expectations - Completed
 
 Expected tests should cover:
 
@@ -221,7 +219,7 @@ Expected tests should cover:
 - fallback output goes to `.aikit/outputs/inventory/` when `.scratch/work/outputs/` does not exist;
 - preferred output goes to `.scratch/work/outputs/aikit/inventory/` when `.scratch/work/outputs/` exists.
 
-## Batch 2 Expected-vs-Actual Verification
+## Batch 2 Expected-vs-Actual Verification - Completed
 
 Before committing Batch 2 implementation, produce an expected-vs-actual file report with:
 
@@ -232,9 +230,129 @@ Before committing Batch 2 implementation, produce an expected-vs-actual file rep
 - unexpected files removed or justified;
 - final list of staged files.
 
+## Batch 3 Scope
+
+Batch 3 should:
+
+- implement `aikit review generate --files <file>...`;
+- produce `run_for_review.txt`;
+- produce `manifest.json`;
+- support `--output <path>`;
+- support `--max-file-bytes <n>`;
+- support `--max-total-bytes <n>`;
+- support `--max-file-lines <n>`;
+- support `--json`;
+- resolve input files relative to the repo root;
+- reject path escapes;
+- reject symlink escapes where the resolved real path leaves the repo;
+- read file contents with deterministic byte/line caps;
+- compute SHA-256 and size for each file;
+- sort files deterministically by repo-relative path before applying caps;
+- include every file in scope in `manifest.json`, whether included, truncated, or omitted;
+- handle nested backticks in file contents using a deterministic fence-length rule;
+- update README usage documentation for explicit-file review bundles;
+- add tests for review bundle generation from explicit files;
+- compare actual files to this manifest before commit.
+
+Batch 3 must not:
+
+- implement `aikit review generate --anchor <anchor.json>`;
+- implement any precomputed `--changed <changed.json>` mode;
+- implement `aikit run script`;
+- create agent skills;
+- create release automation;
+- push to remote.
+
+## Batch 3 Expected Committed Files
+
+| Path | Classification | Purpose | Notes |
+|---|---|---|---|
+| `README.md` | modified | Add concise review bundle generation usage for explicit files | Document output behavior, caps, and manifest output |
+| `src/main.rs` | modified | Register review module if required by module layout | Include because Batch 2 showed command-family wiring may require main.rs changes |
+| `src/cli.rs` | modified | Add review command definitions and help text | Include useful help for `aikit review --help` and `aikit review generate --help` |
+| `src/review.rs` | new | Implement `aikit review generate --files <file>...` | Include path checks, deterministic ordering, caps, bundle writing, manifest writing, and fence-length handling |
+| `src/output.rs` | modified | Support review output directory helpers if needed | Reuse existing output-root behavior |
+| `src/formats.rs` | modified | Add review bundle manifest data structures | Include schema_version, kind, review_id, repo_root, git_head, generated_at, inputs, limits, files, bundle_path, totals |
+| `src/errors.rs` | modified | Add any review-specific errors/blocking states needed | Do not over-expand the error model |
+| `tests/cli_review.rs` | new | Integration tests for `aikit review generate --files` | Use temporary Git repos and deterministic fixture files |
+| `Cargo.toml` | modified | Add any dependency needed for Batch 3 if not already present | Only add dependencies if actually needed |
+| `Cargo.lock` | modified | Reflect dependency graph changes if Cargo.toml changes | No manual editing |
+
+## Batch 3 Expected Generated or Local-Only Files
+
+| Path / Pattern | Classification | Purpose | Commit Policy |
+|---|---|---|---|
+| `target/` | generated | Rust build/test output | Never commit |
+| `.scratch/` | local-only | Local review/output artifacts | Never commit |
+| `.claude/` | local-only | External harness state if present | Never commit |
+| `.aikit/outputs/reviews/` | local-only | Fallback review output when a consuming repo lacks `.scratch/work/outputs/` | Never commit |
+| `.scratch/work/outputs/aikit/reviews/` | local-only | Preferred review output when the consuming repo has `.scratch/work/outputs/` | Never commit |
+
+## Batch 3 Deferred Files
+
+| Path / Area | Classification | Reason Deferred |
+|---|---|---|
+| `aikit review generate --anchor <anchor.json>` | deferred | Batch 4 |
+| precomputed `--changed <changed.json>` review mode | deferred | Only add later if a real need appears |
+| `src/run.rs` | deferred | Batch 5 |
+| `src/policy/` | deferred | Not needed until governed script runner |
+| `docs/agent-usage.md` | deferred | Optional future documentation only |
+| `.github/workflows/` | deferred | Release/CI automation deferred |
+
+## Batch 3 Help Text Expectations
+
+Batch 3 must provide useful help for:
+
+- `aikit review --help`
+- `aikit review generate --help`
+
+For each help surface, require:
+
+- purpose;
+- when to use;
+- explicit-file input behavior;
+- key flags;
+- default output behavior;
+- JSON behavior;
+- cap/truncation behavior;
+- short example where useful.
+
+## Batch 3 Test Expectations
+
+Expected tests should cover:
+
+- review help is available;
+- review generate help is available;
+- `aikit review generate --files <file>...` generates a review directory;
+- `run_for_review.txt` is created;
+- `manifest.json` is created;
+- explicit input files are resolved repo-relatively;
+- file order is deterministic;
+- files outside the repo are rejected;
+- symlink escapes are rejected;
+- SHA-256 and size are recorded;
+- `--max-file-bytes` truncates file content and records truncation;
+- `--max-file-lines` truncates file content and records truncation;
+- `--max-total-bytes` omits later files deterministically and records omitted_reason/cap_hit;
+- every scoped file appears exactly once in manifest files array;
+- nested triple-backticks in file contents do not break the bundle;
+- fallback output goes to `.aikit/outputs/reviews/` when `.scratch/work/outputs/` does not exist;
+- preferred output goes to `.scratch/work/outputs/aikit/reviews/` when `.scratch/work/outputs/` exists;
+- `--json` produces machine-readable command output.
+
+## Batch 3 Expected-vs-Actual Verification
+
+Before committing Batch 3 implementation, produce an expected-vs-actual file report with:
+
+- expected committed files created/modified;
+- expected generated/local-only files observed;
+- deferred files not created;
+- unexpected files created;
+- unexpected files removed or justified;
+- final list of staged files.
+
 ## 11. Future Batch Manifest Updates
 
-- Before Batch 3, update this manifest for review generation from explicit files.
 - Before Batch 4, update this manifest for review generation from anchors.
 - Before Batch 5, update this manifest for governed script runner files.
 - Before Batch 6, update this manifest for local integration/polish.
