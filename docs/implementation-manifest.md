@@ -13,10 +13,11 @@
 - Batch 1 is complete and committed.
 - Batch 2 is complete and committed.
 - Batch 3 is complete and committed.
-- A targeted output-location policy correction (default output root is now always
-  `.aikit/outputs/`) has been applied before Batch 4 — see "Output Location Policy
-  Correction" below.
-- Next implementation scope: Batch 4 (review generation from anchors), not yet started.
+- Output-location policy correction is complete and committed (default output root is
+  always `.aikit/outputs/`) — see "Output Location Policy Correction" below.
+- Current manifest scope: Batch 4.
+- Batch 4 has not yet been implemented.
+- This Batch 4 manifest update is expected to be reviewed before source changes for Batch 4 begin, and should not be committed until reviewed.
 
 ## 3. Classification Values
 
@@ -232,40 +233,36 @@ Before committing Batch 2 implementation, produce an expected-vs-actual file rep
 - unexpected files removed or justified;
 - final list of staged files.
 
-## Batch 3 Scope
+## Batch 3 Completed Scope
 
-Batch 3 should:
+Batch 3 is complete and committed. It delivered:
 
-- implement `aikit review generate --files <file>...`;
-- produce `run_for_review.txt`;
-- produce `manifest.json`;
-- support `--output <path>`;
-- support `--max-file-bytes <n>`;
-- support `--max-total-bytes <n>`;
-- support `--max-file-lines <n>`;
-- support `--json`;
-- resolve input files relative to the repo root;
-- reject path escapes;
-- reject symlink escapes where the resolved real path leaves the repo;
-- read file contents with deterministic byte/line caps;
-- compute SHA-256 and size for each file;
-- sort files deterministically by repo-relative path before applying caps;
-- include every file in scope in `manifest.json`, whether included, truncated, or omitted;
-- handle nested backticks in file contents using a deterministic fence-length rule;
-- update README usage documentation for explicit-file review bundles;
-- add tests for review bundle generation from explicit files;
-- compare actual files to this manifest before commit.
+- `aikit review generate --files <file>...`;
+- explicit-file review bundle generation;
+- `run_for_review.txt`;
+- `manifest.json`;
+- `--output <path>`;
+- `--max-file-bytes <n>`;
+- `--max-total-bytes <n>`;
+- `--max-file-lines <n>`;
+- `--json`;
+- repo-relative input resolution;
+- path/symlink escape rejection;
+- deterministic sorting;
+- SHA-256 and file-size recording;
+- cap/truncation/omission reporting;
+- deterministic backtick fence handling;
+- review help surfaces (`aikit review --help`, `aikit review generate --help`);
+- review tests;
+- README usage update.
 
-Batch 3 must not:
+Known Batch 3 expected-vs-actual deviation:
 
-- implement `aikit review generate --anchor <anchor.json>`;
-- implement any precomputed `--changed <changed.json>` mode;
-- implement `aikit run script`;
-- create agent skills;
-- create release automation;
-- push to remote.
+- `Cargo.toml` and `Cargo.lock` were unchanged because no new dependency was needed.
 
-## Batch 3 Expected Committed Files
+The tables below are retained as the historical Batch 3 manifest record.
+
+## Batch 3 Expected Committed Files - Completed
 
 | Path | Classification | Purpose | Notes |
 |---|---|---|---|
@@ -280,7 +277,7 @@ Batch 3 must not:
 | `Cargo.toml` | modified | Add any dependency needed for Batch 3 if not already present | Only add dependencies if actually needed |
 | `Cargo.lock` | modified | Reflect dependency graph changes if Cargo.toml changes | No manual editing |
 
-## Batch 3 Expected Generated or Local-Only Files
+## Batch 3 Expected Generated or Local-Only Files - Completed
 
 | Path / Pattern | Classification | Purpose | Commit Policy |
 |---|---|---|---|
@@ -290,7 +287,7 @@ Batch 3 must not:
 | `.aikit/outputs/reviews/` | local-only | Fallback review output when a consuming repo lacks `.scratch/work/outputs/` | Never commit |
 | `.scratch/work/outputs/aikit/reviews/` | local-only | Preferred review output when the consuming repo has `.scratch/work/outputs/` | Never commit |
 
-## Batch 3 Deferred Files
+## Batch 3 Deferred Files - Completed
 
 | Path / Area | Classification | Reason Deferred |
 |---|---|---|
@@ -301,7 +298,7 @@ Batch 3 must not:
 | `docs/agent-usage.md` | deferred | Optional future documentation only |
 | `.github/workflows/` | deferred | Release/CI automation deferred |
 
-## Batch 3 Help Text Expectations
+## Batch 3 Help Text Expectations - Completed
 
 Batch 3 must provide useful help for:
 
@@ -319,7 +316,7 @@ For each help surface, require:
 - cap/truncation behavior;
 - short example where useful.
 
-## Batch 3 Test Expectations
+## Batch 3 Test Expectations - Completed
 
 Expected tests should cover:
 
@@ -342,7 +339,7 @@ Expected tests should cover:
 - preferred output goes to `.scratch/work/outputs/aikit/reviews/` when `.scratch/work/outputs/` exists;
 - `--json` produces machine-readable command output.
 
-## Batch 3 Expected-vs-Actual Verification
+## Batch 3 Expected-vs-Actual Verification - Completed
 
 Before committing Batch 3 implementation, produce an expected-vs-actual file report with:
 
@@ -379,8 +376,130 @@ of created paths in `--json`, without embedding paths in the durable on-disk art
 the three test files, `README.md`, and `docs/aikit-implementation-plan.md` (§8). No new
 dependencies; no `src/formats.rs` schema change; no runtime provider/model/agent logic.
 
+## Batch 4 Scope
+
+Batch 4 should:
+
+- implement `aikit review generate --anchor <anchor.json>`;
+- read and validate a batch anchor file;
+- reject missing/invalid anchors;
+- reject anchors from another repo;
+- compute the changed-file set from the anchor using the existing `batch changed` behavior;
+- feed the resulting changed files into existing review bundle generation behavior;
+- produce `run_for_review.txt`;
+- produce `manifest.json`;
+- support `--output <path>`;
+- support `--max-file-bytes <n>`;
+- support `--max-total-bytes <n>`;
+- support `--max-file-lines <n>`;
+- support `--json`;
+- preserve deterministic file ordering;
+- preserve path/symlink safety behavior;
+- preserve truncation/omission/fence behavior from Batch 3;
+- default outputs to `.aikit/outputs/reviews/`;
+- use `.scratch` only through explicit `--output`;
+- update README usage documentation for anchor-driven review bundles;
+- add tests for anchor-driven review bundle generation;
+- compare actual files to this manifest before commit.
+
+Batch 4 must not:
+
+- implement any precomputed `--changed <changed.json>` review mode;
+- implement `aikit run script`;
+- create agent skills;
+- create release automation;
+- push to remote.
+
+## Batch 4 Expected Committed Files
+
+| Path | Classification | Purpose | Notes |
+|---|---|---|---|
+| `README.md` | modified | Add concise anchor-driven review bundle usage | Document that `--anchor <anchor.json>` uses batch changed behavior and that `--changed` remains deferred |
+| `src/cli.rs` | modified | Add `--anchor <anchor.json>` option for review generation and update help text | Do not add `--changed` |
+| `src/review.rs` | modified | Implement anchor-driven review generation by reusing existing review bundle behavior | Preserve explicit-file behavior; do not duplicate bundle-generation logic unnecessarily |
+| `src/batch.rs` | modified | Expose/reuse changed-file computation from anchors if needed | Preserve existing `aikit batch changed` behavior |
+| `src/formats.rs` | modified | Update review input metadata if needed to record anchor-driven mode | Include mode and anchor_path in manifest inputs if not already supported |
+| `src/errors.rs` | modified | Add any anchor/review-specific blocked states or errors needed | Likely candidates include missing/invalid/cross-repo anchor handling if not already present |
+| `tests/cli_review.rs` | modified | Add anchor-driven review generation tests | Preserve existing explicit-file tests |
+| `Cargo.toml` | modified | Add any dependency needed for Batch 4 if not already present | Only add dependencies if actually needed |
+| `Cargo.lock` | modified | Reflect dependency graph changes if Cargo.toml changes | No manual editing |
+
+## Batch 4 Expected Generated or Local-Only Files
+
+| Path / Pattern | Classification | Purpose | Commit Policy |
+|---|---|---|---|
+| `target/` | generated | Rust build/test output | Never commit |
+| `.scratch/` | local-only | Local review/output artifacts only when explicitly requested or external tooling creates it | Never commit |
+| `.claude/` | local-only | External harness state if present | Never commit |
+| `.aikit/outputs/reviews/` | local-only | Default review output | Never commit |
+| `.aikit/outputs/batches/` | local-only | Default batch anchor output | Never commit |
+| `.scratch/work/outputs/aikit/reviews/` | local-only | Optional review output only when explicitly requested through `--output` | Never commit |
+
+## Batch 4 Deferred Files
+
+| Path / Area | Classification | Reason Deferred |
+|---|---|---|
+| precomputed `--changed <changed.json>` review mode | deferred | Only add later if a real need appears |
+| `src/run.rs` | deferred | Batch 5 |
+| `src/policy/` | deferred | Not needed until governed script runner |
+| `docs/agent-usage.md` | deferred | Optional future documentation only |
+| `.github/workflows/` | deferred | Release/CI automation deferred |
+
+## Batch 4 Help Text Expectations
+
+Batch 4 must update useful help for:
+
+- `aikit review --help`
+- `aikit review generate --help`
+
+Help must make clear:
+
+- explicit-file mode remains available through `--files <file>...`;
+- anchor-driven mode is available through `--anchor <anchor.json>`;
+- exactly one input mode should be used at a time;
+- `--changed <changed.json>` is not implemented;
+- default output is `.aikit/outputs/reviews/`;
+- `.scratch` is available only through explicit `--output`;
+- created artifact paths are printed;
+- JSON behavior;
+- cap/truncation behavior;
+- short examples where useful.
+
+## Batch 4 Test Expectations
+
+Expected tests should cover:
+
+- review generate help advertises `--anchor`;
+- review generate help does not advertise `--changed`;
+- explicit-file review generation still works;
+- `aikit review generate --anchor <anchor.json>` creates a review directory;
+- anchor-driven mode creates `run_for_review.txt`;
+- anchor-driven mode creates `manifest.json`;
+- anchor-driven manifest inputs record anchor-driven mode and anchor path;
+- changed files from an anchor are included in the review bundle;
+- unchanged files are not included;
+- missing anchor is rejected;
+- invalid anchor is rejected;
+- anchor from another repo is rejected;
+- using both `--files` and `--anchor` is invalid usage;
+- default output goes to `.aikit/outputs/reviews/`;
+- presence of `.scratch/work/outputs/` does not change the default output;
+- explicit `--output .scratch/work/outputs/aikit/reviews` uses `.scratch` as requested;
+- cap/truncation/omission behavior from explicit-file mode still works for anchor mode;
+- `--json` output includes machine-readable created artifact paths.
+
+## Batch 4 Expected-vs-Actual Verification
+
+Before committing Batch 4 implementation, produce an expected-vs-actual file report with:
+
+- expected committed files created/modified;
+- expected generated/local-only files observed;
+- deferred files not created;
+- unexpected files created;
+- unexpected files removed or justified;
+- final list of staged files.
+
 ## 11. Future Batch Manifest Updates
 
-- Before Batch 4, update this manifest for review generation from anchors.
 - Before Batch 5, update this manifest for governed script runner files.
 - Before Batch 6, update this manifest for local integration/polish.
