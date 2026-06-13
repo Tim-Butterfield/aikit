@@ -819,9 +819,62 @@ update to the new command name (its policy behavior is unchanged and is reused b
 ### Future slices (approved direction, not implemented)
 
 Recorded as approved direction only; **not** implemented in Slice 1 (see the
-implementation plan §22.2). No separate roadmap document is created.
+implementation plan §22.3). No separate roadmap document is created. (Slice 2 has since
+been implemented — see the "Post-Initial Command Shape — Slice 2" section below.)
 
 - Slice 2: `aikit repo init`, `aikit repo doctor`.
+- Slice 3: `aikit output list`, `aikit output show`, `aikit output clean`.
+- Slice 4: `aikit batch list`, `aikit batch show`, `aikit diff anchor`.
+- Slice 5: `aikit env snapshot`, `aikit scan secrets`.
+
+## Post-Initial Command Shape — Slice 2
+
+An approved post-initial slice adds the `repo` command family. Recorded here (not as a
+new initial batch). Slice 1 and the six initial batches remain historical and complete.
+
+### Slice 2 scope (implemented)
+
+- Add the `repo` command family (noun-family / action grammar):
+  - `aikit repo init` — prepare the current repository for local aikit usage: create
+    `.aikit/` and `.aikit/temp/` if missing and ensure `.aikit/` is locally ignored via
+    `.git/info/exclude` (never `.gitignore`). Idempotent; no duplicate ignore entry; no
+    output artifacts, `.scratch/`, or `.claude/`; no remote Git state touched.
+  - `aikit repo doctor` — report repo-local readiness read-only (creates/modifies
+    nothing); exit 0 even with warnings; only `blocked_repo_not_found` is an error.
+- New format kinds: `aikit.repo_init`, `aikit.repo_doctor`. No new runtime dependency;
+  existing blocked states reused (`blocked_repo_not_found`).
+
+### Slice 2 expected committed files
+
+| Path | Classification | Purpose |
+|---|---|---|
+| `src/repo.rs` | modified | add `init` + `doctor` command functions and ignore/dir helpers (alongside existing repo helpers) |
+| `src/cli.rs` | modified | add `Repo`/`RepoCommand::{Init,Doctor}` family + args |
+| `src/main.rs` | modified | dispatch `repo init` / `repo doctor` |
+| `src/formats.rs` | modified | add `RepoInit`, `RepoDoctor`, `PathStatus` + the two kinds |
+| `src/errors.rs` | unchanged | existing `blocked_repo_not_found` reused (no new states) |
+| `tests/cli_repo.rs` | new | help, init (create/ignore/idempotent/outside-repo), doctor (read-only/ready/dirty/locations/interpreters) |
+| `README.md` | modified | repo setup section + command list/current-state |
+| `docs/agent-usage.md` | modified | repo commands in workflow + command families |
+| `docs/aikit-cli-spec.md` | modified | §5.6 repo init/doctor (post-initial Slice 2) |
+| `docs/aikit-implementation-plan.md` | modified | §22.2 Slice 2 implemented; §22.3 future slices |
+| `docs/implementation-manifest.md` | modified | this section |
+
+### Slice 2 expected-vs-actual
+
+To be confirmed against `git status` / `git diff` before commit: the committed set should
+match the table above. `tests/cli_integration.rs` is expected to be **unchanged** (the
+existing end-to-end test already exercises the prior families and needs no repo step;
+listed as a likely-touched file in the task but not required). `Cargo.toml` / `Cargo.lock`
+and `src/errors.rs` are expected to be unchanged (no new dependency; existing blocked
+states reused). No ignored/local-only files are staged; `repo init`'s `.git/info/exclude`
+writes are local Git metadata and are never staged.
+
+### Remaining future slices (approved direction, not implemented)
+
+Slices 3–5 remain approved direction only (see implementation plan §22.3); not
+implemented in Slice 2. No separate roadmap document is created.
+
 - Slice 3: `aikit output list`, `aikit output show`, `aikit output clean`.
 - Slice 4: `aikit batch list`, `aikit batch show`, `aikit diff anchor`.
 - Slice 5: `aikit env snapshot`, `aikit scan secrets`.

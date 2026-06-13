@@ -1304,21 +1304,45 @@ approved post-initial correction and the approved direction for further slices.
 - Where earlier sections (e.g. §11.5) describe `aikit run script`, read them as the
   historical spec of the behavior now provided by `aikit script run`.
 
-### 22.2 Approved post-initial slices (direction only)
+### 22.2 Repo command family (Slice 2 — implemented)
 
-The following slices are approved direction. **Only Slice 1 is implemented now**; the
-rest are recorded so the command grammar stays coherent, and are not implemented in this
-slice. No separate roadmap document is created — this section is the record.
+- The `repo` command family prepares and inspects repo-local aikit setup, using the same
+  noun-family / action grammar:
+  - `aikit repo init` — prepare the current repository for local aikit usage. Detects the
+    repo root (blocks `blocked_repo_not_found` outside a repo), creates `.aikit/` and
+    `.aikit/temp/` if missing, and ensures `.aikit/` is locally ignored. Ignore coverage
+    is added to `.git/info/exclude` (local Git metadata, never staged), **not**
+    `.gitignore`, so the command does not dirty tracked project files; no duplicate entry
+    is added when `.aikit/` is already ignored by any Git ignore source. It is idempotent,
+    creates no output artifacts, does not create `.scratch/` or `.claude/`, runs no
+    build/test/review commands, and never touches remote Git state.
+  - `aikit repo doctor` — report repo-local readiness without mutating anything
+    (read-only). Reports repo root, branch, HEAD, tracked clean/dirty state, `.aikit/`
+    `.aikit/temp/` `.aikit/outputs/` existence, ignore status and source, default output
+    root, allowed script input locations, interpreter availability (`/bin/sh`,
+    `/bin/zsh`), version, warnings, and an overall `ready` flag. Exit 0 when a repo is
+    found, even with warnings; only being outside a repository is an error.
+- Readiness (`ready`) is true when the repo exists, `.aikit/temp/` exists, `.aikit/` is
+  ignored, and the supported interpreters exist. A missing `.aikit/outputs/` (created on
+  demand) and a dirty tracked tree are reported but do not by themselves make a repo
+  unready.
+
+### 22.3 Approved post-initial slices (direction only)
+
+The following remaining slices are approved direction. **Slice 1 and Slice 2 are
+implemented; Slices 3–5 are not implemented** and are recorded only so the command
+grammar stays coherent. No separate roadmap document is created — this section is the
+record.
 
 - **Slice 1 (implemented):** `aikit script run`, `aikit script check`; remove
   `aikit run script`.
-- **Slice 2 (approved, not implemented):** `aikit repo init`, `aikit repo doctor`.
+- **Slice 2 (implemented):** `aikit repo init`, `aikit repo doctor`.
 - **Slice 3 (approved, not implemented):** `aikit output list`, `aikit output show`,
   `aikit output clean`.
 - **Slice 4 (approved, not implemented):** `aikit batch list`, `aikit batch show`,
   `aikit diff anchor`.
 - **Slice 5 (approved, not implemented):** `aikit env snapshot`, `aikit scan secrets`.
 
-These follow the same noun-family / action grammar as Slice 1. Each future slice will be
-implemented only under its own explicitly approved task, with the same checks / review /
-manifest discipline used for the initial batches.
+These follow the same noun-family / action grammar. Each future slice will be implemented
+only under its own explicitly approved task, with the same checks / review / manifest
+discipline used for the initial batches.

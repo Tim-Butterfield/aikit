@@ -42,7 +42,7 @@
 - **not** a replacement for Git;
 - **not** a copied collection of old scripts.
 
-## Initial Command Families
+## Command Families
 
 - `aikit script run`
 - `aikit script check`
@@ -50,6 +50,8 @@
 - `aikit batch changed`
 - `aikit review generate`
 - `aikit inventory repo`
+- `aikit repo init` (post-initial Slice 2)
+- `aikit repo doctor` (post-initial Slice 2)
 
 ## Implementation Direction
 
@@ -114,6 +116,29 @@ Notes:
   `--include-untracked`. Deletions are detected for tracked files only.
 - Every command has detailed `--help`. `aikit` calls no AI providers and has no
   knowledge of any AI agent, CLI, or model.
+
+### Repository setup
+
+Recommended first-time setup for a repository — check, prepare, re-check:
+
+```sh
+aikit repo doctor   # read-only readiness report
+aikit repo init     # prepare local .aikit/temp/ and local ignore coverage
+aikit repo doctor   # confirm the repo is now ready
+```
+
+- `aikit repo init` creates `.aikit/` and `.aikit/temp/` if missing and ensures
+  `.aikit/` is locally ignored. It adds the ignore entry to `.git/info/exclude` (local
+  Git metadata, never staged) rather than modifying `.gitignore`, so it does not dirty
+  tracked project files. It is idempotent, creates no output artifacts, does not create
+  `.scratch/` or `.claude/`, and never touches remote Git state.
+- `aikit repo doctor` is **read-only**: it reports the repo root, branch/HEAD, tracked
+  clean/dirty state, whether `.aikit/`, `.aikit/temp/`, and `.aikit/outputs/` exist,
+  whether `.aikit/` is ignored, the default output root, allowed script input locations,
+  interpreter availability (`/bin/sh`, `/bin/zsh`), the aikit version, any warnings, and
+  an overall `ready` summary. It creates and modifies nothing.
+- Both support `--json`. (If your repo already ignores `.aikit/` via `.gitignore`,
+  `repo init` reports that and leaves `.git/info/exclude` untouched.)
 
 ### Repository inventory
 
@@ -285,9 +310,10 @@ This direct-binary form is for working on `aikit` itself, not for normal downstr
 
 Batch 1 (`batch start`, `batch changed`), Batch 2 (`inventory repo`), Batch 3 +
 Batch 4 (`review generate --files` and `review generate --anchor`), and the
-`script` family (`script run` / `script check`) commands are implemented. The
-precomputed `--changed <changed.json>` review mode is not implemented (anchor mode
-covers the changed-since-anchor case). See
+`script` family (`script run` / `script check`) commands are implemented. Post-initial
+work has added the corrected `script` command shape (Slice 1) and the `repo` family
+(`repo init` / `repo doctor`, Slice 2). The precomputed `--changed <changed.json>`
+review mode is not implemented (anchor mode covers the changed-since-anchor case). See
 [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
 [`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
 implementation plan,

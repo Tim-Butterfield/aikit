@@ -60,6 +60,13 @@ A blocked state is a deliberate, named refusal — agents must surface it, not i
 
 ## Standard Local Workflow
 
+When setting up a repository for the first time, check → prepare → re-check:
+
+1. `aikit repo doctor` — read-only readiness report.
+2. `aikit repo init` — prepare local `.aikit/temp/` and local ignore coverage
+   (idempotent; safe to re-run).
+3. `aikit repo doctor` — confirm the repo is now `ready`.
+
 A typical local cycle:
 
 1. Confirm repo state (e.g. `git status`); make sure you are inside the intended Git
@@ -82,6 +89,31 @@ A typical local cycle:
     state.
 
 ## Command Families
+
+### `aikit repo init`
+
+- **Purpose:** prepare the current repository for local aikit usage.
+- **Typical use:** first-time setup of a repo (creates `.aikit/temp/` and ensures
+  `.aikit/` is locally ignored).
+- **Constraints:** must be run inside a Git repository, else `blocked_repo_not_found`.
+  Idempotent. Adds ignore coverage to `.git/info/exclude` (local Git metadata, never
+  staged), **not** `.gitignore`. Creates no output artifacts and does not create
+  `.scratch/` or `.claude/`; never touches remote Git state.
+- **Output:** a printed (or `--json`) record of what was already present and what was
+  created, including ignore status (`aikit.repo_init`).
+
+### `aikit repo doctor`
+
+- **Purpose:** report repo-local aikit readiness, read-only.
+- **Typical use:** confirm a repo is set up (run before/after `repo init`).
+- **Constraints:** **read-only** — creates and modifies nothing (no `.aikit/`,
+  `.scratch/`, `.claude/`, `.gitignore`, or `.git/info/exclude`). Must be run inside a
+  Git repository, else `blocked_repo_not_found`. Exit 0 even with warnings; missing
+  `.aikit/temp/` or ignore coverage are warnings, not failures.
+- **Output:** a printed (or `--json`) readiness report (`aikit.repo_doctor`): repo root,
+  branch/HEAD, tracked clean/dirty, `.aikit/` `.aikit/temp/` `.aikit/outputs/`
+  existence, ignore status + source, default output root, allowed script locations,
+  interpreter availability, version, warnings, and an overall `ready` flag.
 
 ### `aikit batch start`
 

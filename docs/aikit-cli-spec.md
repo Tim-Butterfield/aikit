@@ -143,6 +143,39 @@ alias (see the implementation plan's post-initial command-shape correction).
 - identify likely tooling/config files;
 - avoid semantic conclusions.
 
+### 5.6 `aikit repo init` / `aikit repo doctor`
+
+The `repo` command family is **post-initial Slice 2** (not part of the completed initial
+implementation batches; see the implementation plan's post-initial slice section). It
+uses the same noun-family / action grammar as the rest of the CLI.
+
+**`aikit repo init` — purpose:**
+- prepare the current repository for local aikit usage.
+
+**`aikit repo init` — behavior:**
+- detect the repo root (block `blocked_repo_not_found` outside a repository);
+- create `.aikit/` and `.aikit/temp/` if missing (idempotent);
+- ensure `.aikit/` is locally ignored, preferring `.git/info/exclude` (local Git
+  metadata, never staged) and never modifying `.gitignore`; add no duplicate entry when
+  `.aikit/` is already ignored by any Git ignore source;
+- create no output artifacts, no `.scratch/`, and no `.claude/`; run no build/test/review
+  commands; never touch remote Git state;
+- report what was already present and what was created (with `--json`).
+
+**`aikit repo doctor` — purpose:**
+- report repo-local aikit readiness without mutating the repository.
+
+**`aikit repo doctor` — behavior:**
+- detect the repo root (block `blocked_repo_not_found` outside a repository);
+- create and modify nothing (read-only): no `.aikit/`, `.scratch/`, `.claude/`,
+  `.aikit/outputs/`, `.gitignore`, or `.git/info/exclude`;
+- report repo root, branch, HEAD, tracked clean/dirty state, `.aikit/` `.aikit/temp/`
+  `.aikit/outputs/` existence, ignore status and source, the default output root, allowed
+  script input locations, interpreter availability (`/bin/sh`, `/bin/zsh`), the version,
+  warnings, and an overall readiness summary (with `--json`);
+- exit 0 when a repository is found, even with warnings; treat missing `.aikit/temp/` or
+  ignore coverage as warnings rather than failures.
+
 ## 6. Output Conventions
 
 - The default output root is always `.aikit/outputs/` under the detected repo root.

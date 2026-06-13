@@ -17,7 +17,9 @@ mod script;
 
 use clap::Parser;
 
-use cli::{BatchCommand, Cli, Command, InventoryCommand, ReviewCommand, ScriptCommand};
+use cli::{
+    BatchCommand, Cli, Command, InventoryCommand, RepoCommand, ReviewCommand, ScriptCommand,
+};
 use errors::AikitError;
 
 fn main() {
@@ -40,6 +42,10 @@ fn run(cli: Cli) -> Result<(), AikitError> {
         },
         Command::Review(rev) => match rev.command {
             ReviewCommand::Generate(args) => review::generate(args),
+        },
+        Command::Repo(repo_cli) => match repo_cli.command {
+            RepoCommand::Init(args) => repo::init(args),
+            RepoCommand::Doctor(args) => repo::doctor(args),
         },
         Command::Script(script_cli) => match script_cli.command {
             ScriptCommand::Run(args) => script::run(args),

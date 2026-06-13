@@ -81,6 +81,21 @@ aikit review generate --anchor .aikit/outputs/batches/<anchor-id>.json --json"
     )]
     Review(ReviewCli),
 
+    /// Prepare and inspect repo-local aikit setup.
+    #[command(
+        long_about = "Prepare and inspect the current repository's local aikit setup. \
+`repo init` creates the local working area (`.aikit/temp/`) and ensures `.aikit/` is \
+locally ignored; `repo doctor` reports readiness without changing anything.\n\n\
+Neither command touches remote Git state, runs build/test/review commands, or modifies \
+`.gitignore`. `repo init` uses `.git/info/exclude` (local Git metadata) for ignore \
+coverage so it does not dirty tracked project files.",
+        after_help = "Examples:\n  \
+aikit repo doctor\n  \
+aikit repo init\n  \
+aikit repo doctor --json"
+    )]
+    Repo(RepoCli),
+
     /// Validate and run local scripts under mechanical safety controls.
     #[command(
         long_about = "Validate and run local scripts under mechanical safety controls. This \
@@ -219,6 +234,65 @@ pub struct ReviewGenerateArgs {
     pub max_file_lines: Option<usize>,
 
     /// Print the machine-readable manifest JSON to stdout in addition to writing files.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RepoCli {
+    #[command(subcommand)]
+    pub command: RepoCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RepoCommand {
+    /// Prepare the current repository for local aikit usage (idempotent).
+    #[command(
+        long_about = "Prepare the current Git repository for local aikit usage. Creates \
+`.aikit/` and `.aikit/temp/` if missing, and ensures `.aikit/` is locally ignored.\n\n\
+Ignore coverage is added to `.git/info/exclude` (local Git metadata that is never \
+staged), NOT to `.gitignore`, so the command does not dirty tracked project files. If \
+`.aikit/` is already ignored by any Git ignore source, no duplicate entry is added.\n\n\
+The command is idempotent: it creates `.aikit/temp/` only if missing and adds the ignore \
+entry only if needed. It creates no output artifacts, does not create `.scratch/` or \
+`.claude/`, runs no build/test/review commands, and never touches remote Git state. It \
+reports what was already present and what was created (and `--json` for machine output).",
+        after_help = "Examples:\n  \
+aikit repo init\n  \
+aikit repo init --json"
+    )]
+    Init(RepoInitArgs),
+
+    /// Report repo-local aikit readiness (read-only; mutates nothing).
+    #[command(
+        long_about = "Report repo-local aikit readiness without changing anything. This \
+command is read-only: it creates no files or directories (no `.aikit/`, `.scratch/`, \
+`.claude/`, or `.aikit/outputs/`) and does not modify `.gitignore` or \
+`.git/info/exclude`.\n\n\
+It reports the repo root, branch, HEAD, tracked-tree clean/dirty state, whether \
+`.aikit/`, `.aikit/temp/`, and `.aikit/outputs/` exist, whether `.aikit/` is ignored \
+(and the ignore source), the default output root, allowed script input locations (and \
+whether each exists), supported interpreters (`/bin/sh`, `/bin/zsh`) and whether each \
+exists, the aikit version, any warnings, and an overall readiness summary.\n\n\
+Exit 0 when a repository is found, even with warnings (missing `.aikit/temp/` or ignore \
+coverage are warnings, not failures); only being outside a Git repository is an error.",
+        after_help = "Examples:\n  \
+aikit repo doctor\n  \
+aikit repo doctor --json"
+    )]
+    Doctor(RepoDoctorArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RepoInitArgs {
+    /// Print the machine-readable init record to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RepoDoctorArgs {
+    /// Print the machine-readable readiness record to stdout instead of human-readable text.
     #[arg(long)]
     pub json: bool,
 }

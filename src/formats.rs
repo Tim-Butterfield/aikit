@@ -11,6 +11,8 @@ pub const KIND_REPO_INVENTORY: &str = "aikit.repo_inventory";
 pub const KIND_REVIEW_BUNDLE: &str = "aikit.review_bundle";
 pub const KIND_SCRIPT_RUN: &str = "aikit.script_run";
 pub const KIND_SCRIPT_CHECK: &str = "aikit.script_check";
+pub const KIND_REPO_INIT: &str = "aikit.repo_init";
+pub const KIND_REPO_DOCTOR: &str = "aikit.repo_doctor";
 
 /// A point-in-time anchor written by `aikit batch start`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -226,4 +228,62 @@ pub struct ScriptCheck {
     pub blocked_state: Option<String>,
     /// Human-readable detail for a block; `null` when accepted.
     pub detail: Option<String>,
+}
+
+/// A repo-relative path and whether it currently exists. Used by `repo doctor` for
+/// allowed script locations and interpreter availability.
+#[derive(Debug, Serialize)]
+pub struct PathStatus {
+    pub path: String,
+    pub exists: bool,
+}
+
+/// The report written by `aikit repo init`. `repo init` only blocks on
+/// `blocked_repo_not_found` (handled as an error), so `blocked_state` is `null` here.
+#[derive(Debug, Serialize)]
+pub struct RepoInit {
+    pub schema_version: u32,
+    pub kind: String,
+    pub repo_root: String,
+    /// Repo-relative aikit directory (`.aikit`).
+    pub aikit_dir: String,
+    /// Repo-relative temp directory (`.aikit/temp`).
+    pub temp_dir: String,
+    /// Repo-relative directories created during this run (empty when idempotent).
+    pub created_dirs: Vec<String>,
+    /// Whether `.aikit/` is ignored after this run.
+    pub aikit_ignored: bool,
+    /// The ignore source covering `.aikit/` (e.g. `.gitignore`, `.git/info/exclude`).
+    pub ignore_source: Option<String>,
+    /// Whether `.git/info/exclude` was updated this run.
+    pub info_exclude_updated: bool,
+    /// Human-readable action log (created / already-present / ignore actions).
+    pub actions: Vec<String>,
+    pub blocked_state: Option<String>,
+}
+
+/// The read-only readiness report written by `aikit repo doctor`. `repo doctor` only
+/// blocks on `blocked_repo_not_found`, so `blocked_state` is `null` here.
+#[derive(Debug, Serialize)]
+pub struct RepoDoctor {
+    pub schema_version: u32,
+    pub kind: String,
+    pub repo_root: String,
+    pub git_branch: String,
+    pub git_head: String,
+    pub tracked_tree_clean: bool,
+    pub aikit_dir_exists: bool,
+    pub temp_dir_exists: bool,
+    pub outputs_dir_exists: bool,
+    pub aikit_ignored: bool,
+    pub ignore_source: Option<String>,
+    /// Repo-relative default output root (`.aikit/outputs`).
+    pub default_output_root: String,
+    pub allowed_script_locations: Vec<PathStatus>,
+    pub interpreters: Vec<PathStatus>,
+    pub current_exe: Option<String>,
+    pub version: String,
+    pub warnings: Vec<String>,
+    pub ready: bool,
+    pub blocked_state: Option<String>,
 }
