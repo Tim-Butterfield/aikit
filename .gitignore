@@ -2,5 +2,6 @@
 .DS_Store
 .scratch/
 .claude/
+/.aikit/
 
 # Cargo.lock is intentionally tracked: aikit is a binary application.

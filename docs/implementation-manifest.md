@@ -739,3 +739,30 @@ Notes and acceptable deviations:
 - None planned. All six initial implementation batches (Batch 1–6) are complete. No
   further batch manifest updates are planned for the initial implementation unless new
   user-approved work is added later.
+
+## Post-Initial Documentation
+
+After the initial six-batch implementation was complete, the user approved creating the
+previously deferred optional `docs/agent-usage.md` document. It was added as
+post-initial documentation, not as a new implementation batch:
+
+- `docs/agent-usage.md` is an agent-agnostic guide describing how an AI agent (or human)
+  uses `aikit` mechanically — its command families, output conventions, exit-code
+  meanings, and the assumptions callers should and should not make.
+- It adds **no** runtime behavior: no Rust source, tests, or `Cargo.*` were changed; no
+  new command family or flag was introduced.
+- It creates **no** agent-specific skills, wrappers, prompts, or command files, and
+  names no specific AI vendor, model, or agent. It notes only that such wrappers could
+  be built **outside** this repository while keeping `aikit` itself agent-agnostic.
+- `README.md` was updated minimally to link to the new guide.
+- Dogfooding the default output root surfaced that `.gitignore` did not actually
+  exclude `.aikit/`, even though the durable docs describe `.aikit/outputs/` (and
+  `.aikit/temp/`) as local-only and not to be committed. `.gitignore` was updated
+  (added `/.aikit/`) so the repository mechanically enforces that the default output
+  root stays local-only. This is repo hygiene, not runtime behavior.
+
+This note supersedes, going forward, the "deferred / optional future documentation"
+status for `docs/agent-usage.md` recorded in the historical Batch 1–5 deferred tables
+and the Batch 6 records above; those records are retained as history. All six initial
+implementation batches remain complete, and no further initial batch manifest updates
+are planned.

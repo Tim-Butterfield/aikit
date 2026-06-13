@@ -219,6 +219,7 @@ Batch 4 (`review generate --files` and `review generate --anchor`), and Batch 5
 review mode is not implemented (anchor mode covers the changed-since-anchor case). See
 [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
 [`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
-implementation plan, and
+implementation plan,
+[`docs/agent-usage.md`](docs/agent-usage.md) for the agent-agnostic usage guide, and
 [`docs/decisions/0001-create-aikit.md`](docs/decisions/0001-create-aikit.md) for the
 repo-creation decision.
