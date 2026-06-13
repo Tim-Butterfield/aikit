@@ -239,6 +239,81 @@ A minimal wrapper pattern:
 4. Report the generated output paths.
 5. Do not push, fetch, or pull unless a human explicitly instructs it.
 
+## Invocation Modes
+
+There are three ways to invoke `aikit`; pick the one that matches the context.
+
+- **Downstream projects (normal usage).** In a repository that consumes `aikit`,
+  invoke the installed binary directly, assuming it is on `PATH`:
+
+  ```sh
+  aikit run script .aikit/temp/task.sh --require-clean --json
+  ```
+
+  This is the pattern agents should use in real work.
+
+- **Direct local binary testing (inside this repository, before installation).** To
+  exercise the compiled binary in the `aikit` repo itself without installing it,
+  prefer the built executable directly:
+
+  ```sh
+  ./target/debug/aikit run script .aikit/temp/task.sh --require-clean --json
+  ```
+
+- **Development convenience (inside this repository only).** `cargo run -- ...` is a
+  build-and-run shortcut used while developing `aikit`; it is **not** the normal
+  downstream usage pattern:
+
+  ```sh
+  cargo run -- run script .aikit/temp/task.sh --require-clean --json
+  ```
+
+  Note that `cargo run -- run script ...` is **not** a clean permission-consolidation
+  test (see below): if the environment has already granted permission to run
+  `cargo run`, the outer invocation is pre-approved and tells you nothing about prompt
+  reduction. Agent-facing wrappers should prefer direct `aikit ...` invocation once the
+  binary is available, not `cargo run -- ...`.
+
+## Permission-Consolidated Script Runner Pattern
+
+When an agent runs many local checks, each separate command may trigger its own
+approval prompt. The script runner can consolidate those into a single top-level
+invocation: the inner commands run as child processes of one `aikit run script` call
+rather than as separate tool calls.
+
+- **Goal:** reduce repeated per-command approval prompts by making exactly one
+  top-level CLI invocation.
+- **Put the repeated checks inside one script** in an allowed script input location,
+  for example `.aikit/temp/local-checks.sh`. The script holds the commands (build,
+  format, lint, test, help surfaces, dogfood runs, etc.).
+- **Then invoke exactly one top-level command:**
+
+  ```sh
+  aikit run script .aikit/temp/local-checks.sh --require-clean --json
+  ```
+
+  Inside this repository, before installation, the equivalent direct-binary form is:
+
+  ```sh
+  ./target/debug/aikit run script .aikit/temp/local-checks.sh --require-clean --json
+  ```
+
+- **Do not** wrap `aikit run script` inside a larger shell batch when the goal is
+  permission consolidation — that reintroduces the outer shell as the thing being
+  approved.
+- **Do not** run setup commands, `--print`, output inspections, and verification
+  commands as separate tool calls if the goal is to measure prompt reduction; put the
+  repeated commands in the script instead and make the single `aikit run script` call.
+- **Review or trust the script before running it.** `aikit run script` still does
+  **not** make a script safe and is **not** a security sandbox — consolidation is about
+  fewer prompts, not about safety.
+- If the UI still prompts once for the single outer `aikit run script` call, that is
+  expected; the goal is to avoid a prompt for every inner command.
+- Some environments do not expose permission-prompt behavior to the terminal. When that
+  is the case, an agent should report only what it can actually observe (e.g. that the
+  inner commands were not separate tool calls) and say plainly that the UI prompt
+  behavior was not observable.
+
 ## Minimal Command Examples
 
 ```sh
@@ -259,6 +334,10 @@ aikit run script .aikit/temp/task.sh --print
 
 # Run a script and record the audit trail under an explicit output location.
 aikit run script .aikit/temp/task.sh --output .scratch/work/outputs/aikit
+
+# Permission-consolidated: run many local checks via one top-level invocation
+# (the repeated commands live inside the script).
+aikit run script .aikit/temp/local-checks.sh --require-clean --json
 ```
 
 See each command's `--help` for the full set of flags and behavior.
