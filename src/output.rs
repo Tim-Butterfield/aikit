@@ -34,3 +34,8 @@ pub fn batches_dir(root: &Path) -> PathBuf {
 pub fn inventory_dir(root: &Path) -> PathBuf {
     root.join("inventory")
 }
+
+/// The `reviews/` subdirectory under an output root.
+pub fn reviews_dir(root: &Path) -> PathBuf {
+    root.join("reviews")
+}

@@ -60,6 +60,26 @@ aikit inventory repo\n  \
 aikit inventory repo --json --include-ignored --max-files 500"
     )]
     Inventory(InventoryCli),
+
+    /// Generate a bounded review bundle from explicit files.
+    #[command(
+        long_about = "Generate a bounded, hashed review bundle for AI/human review. Use it to \
+package a fixed set of files into a single reviewable text bundle plus a manifest, with \
+deterministic ordering and size caps so the surface stays bounded.\n\n\
+Batch 3 supports explicit files only, via `review generate --files <file>...`; the \
+`--anchor` and `--changed` modes are not available (anchor-based generation is deferred). \
+Key flags (on `review generate`): --files <file>... (required inputs, resolved under the \
+repo root), --max-file-bytes / --max-file-lines (truncate a file and record it), \
+--max-total-bytes (omit later files once the running total is exceeded), --output <dir> \
+(override the output root), and --json (also print the manifest JSON to stdout).\n\n\
+`review generate` writes run_for_review.txt and manifest.json under the local output \
+directory (.scratch/work/outputs/aikit/reviews/<id>/ when .scratch/work/outputs/ exists, \
+otherwise .aikit/outputs/reviews/<id>/); output is local-only.",
+        after_help = "Example:\n  \
+aikit review generate --files src/main.rs README.md\n  \
+aikit review generate --files src/main.rs --max-file-bytes 200000 --json"
+    )]
+    Review(ReviewCli),
 }
 
 #[derive(Debug, Args)]
@@ -110,6 +130,66 @@ pub struct InventoryRepoArgs {
     /// Limit the inventory to the first N files after deterministic sorting.
     #[arg(long, value_name = "N")]
     pub max_files: Option<usize>,
+}
+
+#[derive(Debug, Args)]
+pub struct ReviewCli {
+    #[command(subcommand)]
+    pub command: ReviewCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReviewCommand {
+    /// Generate a review bundle from an explicit list of files.
+    #[command(
+        long_about = "Generate a review bundle from an explicit list of files. Each \
+`--files` path is resolved relative to the repository root and must resolve (after \
+symlink resolution) to a real path inside the repo; paths that escape the repo are \
+rejected. Files are sorted by repo-relative path, hashed (SHA-256), and packaged into \
+run_for_review.txt plus a manifest.json.\n\n\
+When to use: to hand a fixed, bounded, hashed set of files to a reviewer (human or AI \
+agent). Caps keep the bundle bounded: --max-file-bytes and --max-file-lines truncate \
+individual files (recording truncation and the bound), and --max-total-bytes omits later \
+files once the running total would be exceeded (recording omitted_reason/cap_hit). Every \
+requested file appears exactly once in the manifest whether included, truncated, or \
+omitted.\n\n\
+Output (run_for_review.txt + manifest.json) is written under the local output directory: \
+.scratch/work/outputs/aikit/reviews/<id>/ when .scratch/work/outputs/ exists, otherwise \
+.aikit/outputs/reviews/<id>/; override the root with --output <dir>. With --json the \
+manifest is also printed to stdout. Batch 3 supports explicit files only; --anchor and \
+--changed modes are not available.",
+        after_help = "Examples:\n  \
+aikit review generate --files src/main.rs README.md\n  \
+aikit review generate --files src/*.rs --max-file-bytes 200000 --max-total-bytes 2000000 --json"
+    )]
+    Generate(ReviewGenerateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ReviewGenerateArgs {
+    /// Explicit files to include, resolved relative to the repo root (one or more).
+    #[arg(long, value_name = "FILE", num_args = 1.., required = true)]
+    pub files: Vec<String>,
+
+    /// Override the output directory root (default: .scratch/work/outputs/aikit, else .aikit/outputs).
+    #[arg(long, value_name = "DIR")]
+    pub output: Option<String>,
+
+    /// Truncate each file's embedded content to at most N bytes.
+    #[arg(long, value_name = "N")]
+    pub max_file_bytes: Option<u64>,
+
+    /// Omit later files once the running included-bytes total would exceed N.
+    #[arg(long, value_name = "N")]
+    pub max_total_bytes: Option<u64>,
+
+    /// Truncate each file's embedded content to at most N lines.
+    #[arg(long, value_name = "N")]
+    pub max_file_lines: Option<usize>,
+
+    /// Print the machine-readable manifest JSON to stdout in addition to writing files.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]

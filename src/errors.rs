@@ -14,6 +14,8 @@ pub mod blocked {
     pub const REPO_NOT_FOUND: &str = "blocked_repo_not_found";
     pub const MISSING_ANCHOR: &str = "blocked_missing_anchor";
     pub const INVALID_ANCHOR: &str = "blocked_invalid_anchor";
+    pub const PATH_ESCAPE: &str = "blocked_path_escape";
+    pub const UNREADABLE_FILE: &str = "blocked_unreadable_file";
 }
 
 #[derive(Debug, Error)]

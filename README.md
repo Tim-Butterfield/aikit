@@ -7,10 +7,12 @@
 - Personal tool — built primarily for the architect's own use.
 - Private repo — not currently intended for public distribution, and may never be.
 - Not yet pushed to any remote.
-- Implemented so far: `aikit batch start`, `aikit batch changed` (Batch 1), and
-  `aikit inventory repo` (Batch 2) — Rust scaffold, repo-root detection, anchor
-  JSON, changed-file detection, and a deterministic hashed repository inventory.
-- Remaining commands (`review generate`, `run script`) are not implemented yet.
+- Implemented so far: `aikit batch start`, `aikit batch changed` (Batch 1),
+  `aikit inventory repo` (Batch 2), and `aikit review generate --files` (Batch 3)
+  — Rust scaffold, repo-root detection, anchor JSON, changed-file detection, a
+  deterministic hashed repository inventory, and bounded review-bundle generation
+  from explicit files.
+- Remaining: anchor-based `review generate` and `run script` are not implemented yet.
 
 ## Purpose
 
@@ -127,10 +129,41 @@ aikit inventory repo --json   # also prints the inventory JSON to stdout
 - Each entry records the repo-relative path, size, SHA-256, and a simple
   extension-based `kind_hint`.
 
+### Review bundle (explicit files)
+
+Package a fixed set of files into a bounded, hashed review bundle:
+
+```sh
+aikit review generate --files src/main.rs README.md
+aikit review generate --files src/main.rs README.md --json   # also print manifest JSON
+```
+
+- Generates two files in a per-review directory:
+  - `run_for_review.txt` — a readable bundle with per-file headings, SHA-256,
+    size, truncation status, and fenced file contents.
+  - `manifest.json` — `schema_version`, `kind`, `review_id`, `repo_root`,
+    `git_head`, `generated_at`, `inputs`, `limits`, `files`, `bundle_path`, and
+    `totals`.
+- Output is written under the local output directory:
+  `.scratch/work/outputs/aikit/reviews/<id>/` when `.scratch/work/outputs/`
+  exists, otherwise `.aikit/outputs/reviews/<id>/` (override with `--output <dir>`).
+  Output is local-only.
+- Input paths are resolved relative to the repo root; paths that escape the repo
+  (absolute, `..`, or via a symlink whose real target leaves the repo) are rejected.
+- Files are sorted by repo-relative path before caps are applied; every requested
+  file appears exactly once in the manifest, whether included, truncated, or omitted.
+- Caps keep the bundle bounded:
+  - `--max-file-bytes <n>` / `--max-file-lines <n>` truncate an individual file's
+    embedded content and record the truncation and the bound.
+  - `--max-total-bytes <n>` omits later files once the running total would be
+    exceeded, recording `omitted_reason` / `cap_hit`.
+- Batch 3 supports **explicit files only**; anchor-based review generation
+  (`--anchor`) is deferred.
+
 ## Current State
 
-Batch 1 (`batch start`, `batch changed`) and Batch 2 (`inventory repo`) commands
-are implemented. See
+Batch 1 (`batch start`, `batch changed`), Batch 2 (`inventory repo`), and Batch 3
+(`review generate --files`) commands are implemented. See
 [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
 [`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
 implementation plan, and

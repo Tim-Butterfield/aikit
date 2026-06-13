@@ -8,6 +8,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub const KIND_BATCH_ANCHOR: &str = "aikit.batch_anchor";
 pub const KIND_BATCH_CHANGED: &str = "aikit.batch_changed";
 pub const KIND_REPO_INVENTORY: &str = "aikit.repo_inventory";
+pub const KIND_REVIEW_BUNDLE: &str = "aikit.review_bundle";
 
 /// A point-in-time anchor written by `aikit batch start`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,4 +103,58 @@ pub struct InventoryCounts {
     /// Total files discovered before truncation, present only when truncated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_discovered: Option<usize>,
+}
+
+/// The manifest written by `aikit review generate` alongside the text bundle.
+#[derive(Debug, Serialize)]
+pub struct ReviewManifest {
+    pub schema_version: u32,
+    pub kind: String,
+    pub review_id: String,
+    pub repo_root: String,
+    pub git_head: String,
+    pub generated_at: String,
+    pub inputs: ReviewInputs,
+    pub limits: ReviewLimits,
+    pub files: Vec<ReviewFile>,
+    pub bundle_path: String,
+    pub totals: ReviewTotals,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewInputs {
+    /// Input mode. Batch 3 supports only `"explicit_files"`.
+    pub mode: String,
+    /// The repo-relative input files requested, in deterministic order.
+    pub files: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewLimits {
+    pub max_file_bytes: Option<u64>,
+    pub max_total_bytes: Option<u64>,
+    pub max_file_lines: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewFile {
+    pub path: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+    pub included: bool,
+    pub truncated: bool,
+    pub lines_included: usize,
+    pub bytes_included: u64,
+    /// Reason the file was omitted from the bundle, or `null` when included.
+    pub omitted_reason: Option<String>,
+    /// Which cap bound this file (`file_bytes` | `file_lines` | `total_bytes`), or `null`.
+    pub cap_hit: Option<String>,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct ReviewTotals {
+    pub files_total: usize,
+    pub files_included: usize,
+    pub files_omitted: usize,
+    pub bytes_included: u64,
 }

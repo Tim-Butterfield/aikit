@@ -11,10 +11,11 @@ mod formats;
 mod inventory;
 mod output;
 mod repo;
+mod review;
 
 use clap::Parser;
 
-use cli::{BatchCommand, Cli, Command, InventoryCommand};
+use cli::{BatchCommand, Cli, Command, InventoryCommand, ReviewCommand};
 use errors::AikitError;
 
 fn main() {
@@ -34,6 +35,9 @@ fn run(cli: Cli) -> Result<(), AikitError> {
         },
         Command::Inventory(inv) => match inv.command {
             InventoryCommand::Repo(args) => inventory::repo(args),
+        },
+        Command::Review(rev) => match rev.command {
+            ReviewCommand::Generate(args) => review::generate(args),
         },
     }
 }
