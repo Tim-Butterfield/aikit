@@ -10,9 +10,10 @@
 
 ## 2. Status
 
-- Current manifest scope: Batch 1.
-- Batch 1 has not yet been implemented.
-- This manifest is expected to be committed before source files are created.
+- Batch 1 is complete and committed.
+- Current manifest scope: Batch 2.
+- Batch 2 has not yet been implemented.
+- This Batch 2 manifest update is expected to be reviewed before source changes for Batch 2 begin, and should not be committed until reviewed.
 
 ## 3. Classification Values
 
@@ -22,36 +23,22 @@
 - `local-only` — file expected locally but not committed.
 - `deferred` — file intentionally not created in the current batch.
 
-## 4. Batch 1 Scope
+## 4. Batch 1 Completed Scope
 
-Batch 1 should:
+Batch 1 is complete and committed. It delivered:
 
-- revise `.gitignore` so `Cargo.lock` can be tracked;
-- create a minimal Rust CLI project;
-- implement `aikit --help`;
-- implement `aikit batch --help`;
-- implement `aikit batch start --help`;
-- implement `aikit batch changed --help`;
-- implement `aikit batch start`;
-- implement `aikit batch changed --anchor <anchor.json>`;
-- implement repo-root detection;
-- implement output-root selection;
-- implement batch anchor JSON;
-- implement simple changed-file detection;
-- add tests for batch start/changed;
-- update README usage documentation;
-- compare actual files to this manifest before commit.
+- Rust scaffold (minimal module layout);
+- `aikit batch start`;
+- `aikit batch changed --anchor <anchor.json>`;
+- repo-root detection, output-root selection, batch anchor JSON, and simple changed-file detection;
+- root and batch help surfaces (`aikit --help`, `aikit batch --help`, `aikit batch start --help`, `aikit batch changed --help`);
+- tests for batch behavior;
+- README usage update;
+- `Cargo.lock` tracking.
 
-Batch 1 must not:
+The tables in sections 5–10 below are retained as the historical Batch 1 manifest record.
 
-- implement `aikit inventory repo`;
-- implement `aikit review generate`;
-- implement `aikit run script`;
-- create agent skills;
-- create release automation;
-- push to remote.
-
-## 5. Batch 1 Expected Committed Files
+## 5. Batch 1 Expected Committed Files - Completed
 
 | Path | Classification | Purpose | Notes |
 |---|---|---|---|
@@ -136,10 +123,118 @@ Before committing Batch 1 implementation, produce an expected-vs-actual file rep
 - unexpected files removed or justified;
 - final list of staged files.
 
+## Batch 2 Scope
+
+Batch 2 should:
+
+- implement ignore-aware file walking;
+- implement SHA-256 hashing for inventory entries;
+- implement `aikit inventory repo`;
+- implement inventory JSON output;
+- implement inventory text output;
+- implement deterministic file ordering;
+- support `--output <path>`;
+- support `--json`;
+- support `--include-ignored`;
+- support `--max-files <n>`;
+- exclude `.git/` always;
+- exclude default build/dependency/output directories by directory-only rules;
+- update README usage documentation for inventory;
+- add tests for inventory behavior;
+- compare actual files to this manifest before commit.
+
+Batch 2 must not:
+
+- implement `aikit review generate`;
+- implement `aikit run script`;
+- create agent skills;
+- create release automation;
+- push to remote.
+
+## Batch 2 Expected Committed Files
+
+| Path | Classification | Purpose | Notes |
+|---|---|---|---|
+| `README.md` | modified | Add concise inventory command usage | Document output behavior and JSON/text outputs |
+| `src/cli.rs` | modified | Add inventory command definitions and help text | Include useful help for `aikit inventory --help` and `aikit inventory repo --help` |
+| `src/inventory.rs` | new | Implement `aikit inventory repo` | Include ignore-aware traversal, deterministic ordering, hashing, JSON/text output |
+| `src/output.rs` | modified | Support inventory output directory helpers if needed | Reuse existing output-root behavior |
+| `src/formats.rs` | modified | Add inventory JSON data structures | Include schema_version, kind, inventory_id, repo_root, git_head, generated_at, files, counts |
+| `src/errors.rs` | modified | Add any inventory-specific errors/blocking states needed | Do not over-expand the error model |
+| `tests/cli_inventory.rs` | new | Integration tests for `aikit inventory repo` | Use temporary Git repos and deterministic fixture files |
+| `Cargo.toml` | modified | Add any dependency needed for Batch 2 if not already present | Only add dependencies if actually needed |
+| `Cargo.lock` | modified | Reflect dependency graph changes if Cargo.toml changes | No manual editing |
+
+## Batch 2 Expected Generated or Local-Only Files
+
+| Path / Pattern | Classification | Purpose | Commit Policy |
+|---|---|---|---|
+| `target/` | generated | Rust build/test output | Never commit |
+| `.scratch/` | local-only | Local review/output artifacts | Never commit |
+| `.claude/` | local-only | External harness state if present | Never commit |
+| `.aikit/outputs/inventory/` | local-only | Fallback inventory output when a consuming repo lacks `.scratch/work/outputs/` | Never commit |
+| `.scratch/work/outputs/aikit/inventory/` | local-only | Preferred inventory output when the consuming repo has `.scratch/work/outputs/` | Never commit |
+
+## Batch 2 Deferred Files
+
+| Path / Area | Classification | Reason Deferred |
+|---|---|---|
+| `src/review.rs` | deferred | Batch 3 / Batch 4 |
+| `src/run.rs` | deferred | Batch 5 |
+| `src/policy/` | deferred | Not needed until governed script runner |
+| `docs/agent-usage.md` | deferred | Optional future documentation only |
+| `.github/workflows/` | deferred | Release/CI automation deferred |
+
+## Batch 2 Help Text Expectations
+
+Batch 2 must provide useful help for:
+
+- `aikit inventory --help`
+- `aikit inventory repo --help`
+
+For each help surface, require:
+
+- purpose;
+- when to use;
+- key flags;
+- default output behavior;
+- JSON behavior;
+- ignored-file behavior;
+- short example where useful.
+
+## Batch 2 Test Expectations
+
+Expected tests should cover:
+
+- inventory help is available;
+- inventory repo help is available;
+- `aikit inventory repo` inventories a simple Git repo;
+- `.git/` is always excluded;
+- output is deterministic and repo-relative;
+- JSON output includes schema_version, kind, inventory_id, repo_root, git_head, generated_at, files, counts;
+- text output is created in the inventory output directory;
+- SHA-256 is computed for included files;
+- `.gitignore` is respected by default;
+- ignored files are included only with `--include-ignored`;
+- default build/dependency/output directories are excluded by directory-only rules;
+- `--max-files <n>` limits the inventory deterministically and reports the limitation;
+- fallback output goes to `.aikit/outputs/inventory/` when `.scratch/work/outputs/` does not exist;
+- preferred output goes to `.scratch/work/outputs/aikit/inventory/` when `.scratch/work/outputs/` exists.
+
+## Batch 2 Expected-vs-Actual Verification
+
+Before committing Batch 2 implementation, produce an expected-vs-actual file report with:
+
+- expected committed files created/modified;
+- expected generated/local-only files observed;
+- deferred files not created;
+- unexpected files created;
+- unexpected files removed or justified;
+- final list of staged files.
+
 ## 11. Future Batch Manifest Updates
 
-- Before Batch 2, this manifest should be updated for inventory files.
-- Before Batch 3, this manifest should be updated for review generation from explicit files.
-- Before Batch 4, this manifest should be updated for review generation from anchors.
-- Before Batch 5, this manifest should be updated for governed script runner files.
-- Before Batch 6, this manifest should be updated for local integration/polish.
+- Before Batch 3, update this manifest for review generation from explicit files.
+- Before Batch 4, update this manifest for review generation from anchors.
+- Before Batch 5, update this manifest for governed script runner files.
+- Before Batch 6, update this manifest for local integration/polish.
