@@ -1,5 +1,6 @@
 /target/
-Cargo.lock
 .DS_Store
 .scratch/
 .claude/
+
+# Cargo.lock is intentionally tracked: aikit is a binary application.

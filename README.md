@@ -7,9 +7,10 @@
 - Personal tool — built primarily for the architect's own use.
 - Private repo — not currently intended for public distribution, and may never be.
 - Not yet pushed to any remote.
-- No implementation yet.
-- Specification-first: this repo currently contains documentation and design
-  decisions only.
+- Batch 1 implemented: the `aikit batch start` and `aikit batch changed` commands
+  (Rust scaffold, repo-root detection, anchor JSON, simple changed-file detection).
+- Remaining commands (`inventory repo`, `review generate`, `run script`) are not
+  implemented yet.
 
 ## Purpose
 
@@ -67,9 +68,46 @@
   consumer.
 - `aikit` is **not** Architect Toolkit-specific.
 
+## Building and Usage (Batch 1)
+
+`aikit` is a standard Rust binary. Build and install locally:
+
+```sh
+cargo build            # debug build at target/debug/aikit
+cargo build --release  # optimized build at target/release/aikit
+cargo install --path . # install `aikit` onto your PATH
+```
+
+Run inside a Git repository. Mark an anchor before a unit of work, then list what
+changed since:
+
+```sh
+# Create a batch anchor (writes JSON under the local output directory).
+aikit batch start
+# → Batch anchor created:
+#     .scratch/work/outputs/aikit/batches/<anchor-id>.json
+#   (or .aikit/outputs/batches/<anchor-id>.json when .scratch/work/outputs/ is absent)
+
+# After doing some work, list created/modified files since the anchor.
+aikit batch changed --anchor .scratch/work/outputs/aikit/batches/<anchor-id>.json
+
+# Include new untracked files (best-effort mtime heuristic) and machine-readable JSON:
+aikit batch changed --anchor <anchor.json> --include-untracked --hash --json
+```
+
+Notes:
+
+- Output files are **local-only** and never need committing.
+- Tracked changes come from `git status`; untracked files require
+  `--include-untracked`. Deletions are detected for tracked files only.
+- Every command has detailed `--help`. `aikit` calls no AI providers and has no
+  knowledge of any AI agent, CLI, or model.
+
 ## Current State
 
-Specification-first. No source code, no `src/`, no Rust scaffolding yet.
-See [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification and
+Batch 1 commands are implemented (`batch start`, `batch changed`). See
+[`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
+[`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
+implementation plan, and
 [`docs/decisions/0001-create-aikit.md`](docs/decisions/0001-create-aikit.md) for the
 repo-creation decision.
