@@ -211,6 +211,62 @@ aikit run script .aikit/temp/check.sh --require-clean   # block if the tracked t
 - **Exit code:** an executed script's exit code is propagated; policy blocks return a
   non-zero `blocked_*` error (exit 3); invalid usage is exit 2.
 
+## Install for Local Use
+
+Install the `aikit` binary so downstream repositories can call `aikit ...` directly,
+without `cargo run`. `cargo install --path .` builds `aikit` and copies it into Cargo's
+bin directory (normally `$HOME/.cargo/bin`). Re-run `cargo install --path .` after
+pulling or building a newer local version.
+
+macOS (zsh) — recommended:
+
+```sh
+# From the aikit repo
+cargo install --path .
+
+# Ensure Cargo-installed binaries are on PATH for zsh
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+# Verify
+aikit --help
+```
+
+- After this, other repositories can call `aikit ...` directly.
+- On macOS with zsh, `~/.zshrc` is usually the right place to ensure `$HOME/.cargo/bin`
+  is on `PATH`. If `$HOME/.cargo/bin` is already on `PATH`, the PATH edit is not needed.
+- Avoid `sudo` and avoid copying into system directories for normal personal use.
+
+Linux:
+
+```sh
+cargo install --path .
+export PATH="$HOME/.cargo/bin:$PATH"
+aikit --help
+```
+
+Put the `PATH` line in your shell startup file (for example `~/.bashrc` or `~/.zshrc`)
+if `$HOME/.cargo/bin` is not already on `PATH`.
+
+Windows:
+
+```sh
+cargo install --path .
+aikit --help
+```
+
+Cargo normally installs to `%USERPROFILE%\.cargo\bin`; ensure that directory is on your
+user `PATH`, and open a new terminal after changing `PATH`.
+
+Direct binary without installing (only while developing or testing `aikit` itself):
+
+```sh
+cargo build
+./target/debug/aikit --help
+```
+
+This direct-binary form is for working on `aikit` itself, not for normal downstream use.
+
 ## Current State
 
 Batch 1 (`batch start`, `batch changed`), Batch 2 (`inventory repo`), Batch 3 +

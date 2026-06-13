@@ -201,6 +201,61 @@ A typical local cycle:
   retained), `stdout.txt`, `stderr.txt`, and `run.json` (interpreter, argv, cwd, git
   heads, exit code, timings, paths, …).
 
+## Agent-Generated Script Rules
+
+`aikit` validates *where the script file lives* (it must resolve to a real file under an
+allowed input location) and records the run. But once execution begins, the script runs
+from the repository root through `/bin/sh` or `/bin/zsh`, and `aikit run script` does
+**not** constrain which paths the script touches after it starts — it is **not a
+filesystem sandbox**. A script under `.aikit/temp/do_stuff.sh` can therefore read and
+write files across the repository, which is exactly what makes useful commands (`sed`,
+`awk`, build, test, format, inventory, review/dogfood) possible — but a poorly written
+script could also reach outside the repository. The agent that generates the script is
+responsible for keeping it within the intended repository-local boundary.
+
+> `aikit run script` validates where the script file lives and records the run, but it
+> does not sandbox every path the script touches after execution. The agent is
+> responsible for generating scripts that operate only within the intended
+> repository-local boundary unless the user explicitly approves a wider scope.
+
+**Allowed script behavior:**
+
+- read files under the current repository root;
+- write files under the current repository root when the task requires edits;
+- write generated/local-only outputs under `.aikit/` or `.scratch/`;
+- run local project checks such as build, test, lint, formatting, inventory, and review
+  commands;
+- use explicit repo-relative paths rooted at the repository root;
+- create temporary local working files only in approved local areas, especially
+  `.aikit/` or `.scratch/`.
+
+**Disallowed script behavior, unless the user explicitly approves it:**
+
+- `cd ..`, `pushd ..`, or otherwise moving above the repository root;
+- reading or writing parent directories;
+- reading or writing sibling repositories;
+- using `../` paths to escape the repository;
+- using arbitrary absolute paths outside the repository;
+- touching remote Git state;
+- installing packages or tools;
+- deleting broad directory trees;
+- changing global, user, shell, OS, or system configuration;
+- using network operations;
+- modifying files outside the intended repository.
+
+**Script style guidance:**
+
+- start with `set -euo pipefail`;
+- print section headers before major steps;
+- use explicit repo-relative paths;
+- avoid hidden side effects;
+- avoid destructive commands;
+- keep the script small enough to review before execution;
+- report what the script is expected to change;
+- prefer `--require-clean` when the script is expected only to verify state;
+- use `--allow-dirty` only when the script is intentionally operating on a dirty working
+  tree.
+
 ## What Agents Must Not Assume
 
 - Do **not** assume the "latest" anchor automatically — always pass an explicit
