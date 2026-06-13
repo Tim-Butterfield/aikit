@@ -123,9 +123,16 @@ pub struct ReviewManifest {
 
 #[derive(Debug, Serialize)]
 pub struct ReviewInputs {
-    /// Input mode. Batch 3 supports only `"explicit_files"`.
+    /// Input mode: `"explicit_files"` (from `--files`) or `"changed_since_anchor"`
+    /// (from `--anchor`).
     pub mode: String,
-    /// The repo-relative input files requested, in deterministic order.
+    /// For anchor mode: the anchor file path as supplied on the command line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_path: Option<String>,
+    /// For anchor mode: the anchor's id, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_id: Option<String>,
+    /// The repo-relative input files in scope, in deterministic order.
     pub files: Vec<String>,
 }
 

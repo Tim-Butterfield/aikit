@@ -85,6 +85,36 @@ fn find_review_dir(repo: &Path) -> PathBuf {
     entry.path()
 }
 
+/// Run `aikit batch start` and return the repo-relative path of the created anchor.
+fn make_anchor(repo: &Path) -> String {
+    aikit(repo).args(["batch", "start"]).assert().success();
+    let batches = repo.join(".aikit/outputs/batches");
+    let entry = fs::read_dir(&batches)
+        .expect("batches dir exists")
+        .next()
+        .expect("an anchor file")
+        .expect("dir entry");
+    format!(
+        ".aikit/outputs/batches/{}",
+        entry.file_name().to_string_lossy()
+    )
+}
+
+/// Run `review generate --anchor <anchor> [extra...] --json` and parse stdout.
+fn anchor_review_json(dir: &Path, anchor: &str, extra: &[&str]) -> Value {
+    let mut args = vec!["review", "generate", "--anchor", anchor];
+    args.extend_from_slice(extra);
+    args.push("--json");
+    let out = aikit(dir)
+        .args(&args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    serde_json::from_slice(&out).unwrap()
+}
+
 // ---- help ----
 
 #[test]
@@ -106,6 +136,28 @@ fn review_generate_help_is_available() {
         .stdout(predicates::str::contains("--max-file-bytes"))
         .stdout(predicates::str::contains("--max-total-bytes"))
         .stdout(predicates::str::contains("--max-file-lines"));
+}
+
+#[test]
+fn review_generate_help_advertises_anchor_not_changed() {
+    let out = AssertCommand::new(cargo_bin("aikit"))
+        .args(["review", "generate", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8_lossy(&out);
+    assert!(help.contains("--anchor"), "help should advertise --anchor");
+    // `--changed` must not be offered as a flag (it may only appear as prose noting
+    // it is not implemented). Check the Options section has no `--changed` flag line.
+    let options = help.split("Options:").nth(1).unwrap_or("");
+    assert!(
+        !options
+            .lines()
+            .any(|l| l.trim_start().starts_with("--changed")),
+        "--changed must not be offered as a flag"
+    );
 }
 
 // ---- core behavior ----
@@ -447,4 +499,308 @@ fn review_json_includes_written_artifact_paths() {
         written.iter().any(|w| w.ends_with("manifest.json")),
         "written must list manifest.json: {written:?}"
     );
+}
+
+// ---- anchor-driven mode ----
+
+#[test]
+fn anchor_mode_creates_review_dir_and_files() {
+    let repo = init_repo();
+    let anchor = make_anchor(repo.path());
+    // Change a tracked file after the anchor.
+    fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
+
+    aikit(repo.path())
+        .args(["review", "generate", "--anchor", &anchor])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(".aikit/outputs/reviews/"));
+
+    let dir = find_review_dir(repo.path());
+    assert!(dir.join("run_for_review.txt").is_file());
+    assert!(dir.join("manifest.json").is_file());
+}
+
+#[test]
+fn anchor_mode_records_mode_and_anchor_in_manifest() {
+    let repo = init_repo();
+    let anchor = make_anchor(repo.path());
+    fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    assert_eq!(json["inputs"]["mode"], "changed_since_anchor");
+    assert_eq!(json["inputs"]["anchor_path"], anchor);
+    assert!(
+        !json["inputs"]["anchor_id"].as_str().unwrap().is_empty(),
+        "anchor_id should be recorded"
+    );
+    // --json includes the created artifact paths.
+    let written: Vec<String> = json["written"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(written.iter().any(|w| w.ends_with("run_for_review.txt")));
+    assert!(written.iter().any(|w| w.ends_with("manifest.json")));
+}
+
+#[test]
+fn anchor_mode_includes_changed_excludes_unchanged() {
+    let repo = init_repo();
+    // README.md and src/main.rs are committed by init_repo; commit one more.
+    fs::write(repo.path().join("stable.txt"), "stable\n").unwrap();
+    git(repo.path(), &["add", "stable.txt"]);
+    git(repo.path(), &["commit", "-q", "-m", "add stable"]);
+
+    let anchor = make_anchor(repo.path());
+    // Change only README.md after the anchor.
+    fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    let paths = paths_of(&json);
+    assert!(
+        paths.contains(&"README.md".to_string()),
+        "changed file included"
+    );
+    assert!(
+        !paths.contains(&"stable.txt".to_string()),
+        "unchanged file excluded"
+    );
+    assert!(
+        !paths.contains(&"src/main.rs".to_string()),
+        "unchanged file excluded"
+    );
+}
+
+#[test]
+fn anchor_mode_missing_anchor_is_rejected() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args(["review", "generate", "--anchor", "does-not-exist.json"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_missing_anchor"));
+}
+
+#[test]
+fn anchor_mode_invalid_anchor_is_rejected() {
+    let repo = init_repo();
+    fs::write(repo.path().join("bad.json"), "{ not valid json").unwrap();
+    aikit(repo.path())
+        .args(["review", "generate", "--anchor", "bad.json"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_invalid_anchor"));
+}
+
+#[test]
+fn anchor_mode_foreign_anchor_is_rejected() {
+    let repo_a = init_repo();
+    let anchor_rel = make_anchor(repo_a.path());
+    let foreign = repo_a.path().join(&anchor_rel);
+
+    let repo_b = init_repo();
+    aikit(repo_b.path())
+        .args(["review", "generate", "--anchor", foreign.to_str().unwrap()])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_invalid_anchor"));
+}
+
+#[test]
+fn both_files_and_anchor_is_invalid_usage() {
+    let repo = init_repo();
+    let anchor = make_anchor(repo.path());
+    aikit(repo.path())
+        .args([
+            "review",
+            "generate",
+            "--files",
+            "README.md",
+            "--anchor",
+            &anchor,
+        ])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn neither_files_nor_anchor_is_invalid_usage() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args(["review", "generate"])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn anchor_mode_default_output_ignores_scratch_even_when_present() {
+    let repo = init_repo();
+    fs::create_dir_all(repo.path().join(".scratch/work/outputs")).unwrap();
+    let anchor = make_anchor(repo.path());
+    fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
+
+    aikit(repo.path())
+        .args(["review", "generate", "--anchor", &anchor])
+        .assert()
+        .success();
+    assert!(
+        repo.path().join(".aikit/outputs/reviews").is_dir(),
+        "anchor-mode default output stays under .aikit/outputs even when .scratch exists"
+    );
+    assert!(
+        !repo.path().join(".scratch/work/outputs/aikit").exists(),
+        ".scratch must never be auto-selected"
+    );
+}
+
+#[test]
+fn anchor_mode_output_override_is_honored() {
+    let repo = init_repo();
+    let anchor = make_anchor(repo.path());
+    fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
+
+    aikit(repo.path())
+        .args([
+            "review",
+            "generate",
+            "--anchor",
+            &anchor,
+            "--output",
+            ".scratch/work/outputs/aikit",
+        ])
+        .assert()
+        .success();
+    assert!(
+        repo.path()
+            .join(".scratch/work/outputs/aikit/reviews")
+            .is_dir(),
+        "explicit --output should be used as requested"
+    );
+}
+
+#[test]
+fn anchor_mode_respects_per_file_caps() {
+    let repo = init_repo();
+    let anchor = make_anchor(repo.path());
+    // Change README.md to long content, then cap it.
+    fs::write(repo.path().join("README.md"), "abcdefghij\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &["--max-file-bytes", "4"]);
+    let f = json["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "README.md")
+        .expect("changed file present");
+    assert_eq!(f["truncated"], true);
+    assert_eq!(f["cap_hit"], "file_bytes");
+    assert_eq!(f["bytes_included"], 4);
+}
+
+#[test]
+fn anchor_mode_includes_renamed_destination() {
+    let repo = init_repo();
+    fs::write(repo.path().join("old.txt"), "content\n").unwrap();
+    git(repo.path(), &["add", "old.txt"]);
+    git(repo.path(), &["commit", "-q", "-m", "add old"]);
+
+    let anchor = make_anchor(repo.path());
+    git(repo.path(), &["mv", "old.txt", "new.txt"]);
+
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    let paths = paths_of(&json);
+    assert!(
+        paths.contains(&"new.txt".to_string()),
+        "rename destination included"
+    );
+    assert!(
+        !paths.contains(&"old.txt".to_string()),
+        "renamed-from path not bundled"
+    );
+}
+
+#[test]
+fn anchor_mode_excludes_deleted_rename_destination() {
+    let repo = init_repo();
+    fs::write(repo.path().join("old.txt"), "content\n").unwrap();
+    git(repo.path(), &["add", "old.txt"]);
+    git(repo.path(), &["commit", "-q", "-m", "add old"]);
+
+    let anchor = make_anchor(repo.path());
+    // Stage a rename, then delete the destination in the worktree (status `RD`).
+    git(repo.path(), &["mv", "old.txt", "new.txt"]);
+    fs::remove_file(repo.path().join("new.txt")).unwrap();
+
+    // The review must still succeed (the missing destination is simply excluded).
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    let paths = paths_of(&json);
+    assert!(
+        !paths.contains(&"new.txt".to_string()),
+        "deleted rename destination must not be bundled"
+    );
+}
+
+#[test]
+fn anchor_mode_excludes_deleted_tracked_file() {
+    let repo = init_repo();
+    fs::write(repo.path().join("del.txt"), "bye\n").unwrap();
+    git(repo.path(), &["add", "del.txt"]);
+    git(repo.path(), &["commit", "-q", "-m", "add del"]);
+
+    let anchor = make_anchor(repo.path());
+    fs::remove_file(repo.path().join("del.txt")).unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    assert!(
+        !paths_of(&json).contains(&"del.txt".to_string()),
+        "deleted tracked file is not bundle-able"
+    );
+}
+
+#[test]
+fn anchor_mode_excludes_untracked_file() {
+    let repo = init_repo();
+    let anchor = make_anchor(repo.path());
+    fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
+    fs::write(repo.path().join("untracked.txt"), "new\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    let paths = paths_of(&json);
+    assert!(
+        paths.contains(&"README.md".to_string()),
+        "tracked change included"
+    );
+    assert!(
+        !paths.contains(&"untracked.txt".to_string()),
+        "untracked file excluded from anchor-driven review"
+    );
+}
+
+#[test]
+fn anchor_mode_respects_total_byte_cap() {
+    let repo = init_repo();
+    fs::write(repo.path().join("aaaa.txt"), "12345\n").unwrap();
+    fs::write(repo.path().join("zzzz.txt"), "67890\n").unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "two"]);
+
+    let anchor = make_anchor(repo.path());
+    fs::write(repo.path().join("aaaa.txt"), "12345x\n").unwrap();
+    fs::write(repo.path().join("zzzz.txt"), "67890x\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &["--max-total-bytes", "7"]);
+    let files = json["files"].as_array().unwrap();
+    let a = files.iter().find(|f| f["path"] == "aaaa.txt").unwrap();
+    let z = files.iter().find(|f| f["path"] == "zzzz.txt").unwrap();
+    assert_eq!(a["included"], true, "first sorted file fits");
+    assert_eq!(z["included"], false, "later file omitted by total cap");
+    assert_eq!(z["omitted_reason"], "max_total_bytes");
+    assert_eq!(z["cap_hit"], "total_bytes");
 }

@@ -8,11 +8,12 @@
 - Private repo — not currently intended for public distribution, and may never be.
 - Not yet pushed to any remote.
 - Implemented so far: `aikit batch start`, `aikit batch changed` (Batch 1),
-  `aikit inventory repo` (Batch 2), and `aikit review generate --files` (Batch 3)
-  — Rust scaffold, repo-root detection, anchor JSON, changed-file detection, a
-  deterministic hashed repository inventory, and bounded review-bundle generation
-  from explicit files.
-- Remaining: anchor-based `review generate` and `run script` are not implemented yet.
+  `aikit inventory repo` (Batch 2), and `aikit review generate` from explicit files
+  (Batch 3) or a batch anchor (Batch 4) — Rust scaffold, repo-root detection, anchor
+  JSON, changed-file detection, a deterministic hashed repository inventory, and
+  bounded review-bundle generation from explicit files or anchor-driven changes.
+- Remaining: the precomputed `--changed <changed.json>` review mode and
+  `aikit run script` are not implemented yet.
 
 ## Purpose
 
@@ -132,15 +133,26 @@ aikit inventory repo --json   # also prints the inventory JSON to stdout
 - Each entry records the repo-relative path, size, SHA-256, and a simple
   extension-based `kind_hint`.
 
-### Review bundle (explicit files)
+### Review bundle
 
-Package a fixed set of files into a bounded, hashed review bundle:
+Package files into a bounded, hashed review bundle from one of two input modes —
+explicit files, or the files changed since a batch anchor:
 
 ```sh
+# Explicit files:
 aikit review generate --files src/main.rs README.md
 aikit review generate --files src/main.rs README.md --json   # also print manifest JSON
+
+# Files changed since a batch anchor (uses the same logic as `batch changed`):
+aikit review generate --anchor .aikit/outputs/batches/<anchor-id>.json
 ```
 
+- Exactly one input mode is used per run: `--files <file>...` or
+  `--anchor <anchor.json>`. Supplying both, or neither, is invalid usage. The
+  precomputed `--changed <changed.json>` mode is **not implemented**.
+- Anchor mode bundles the files changed since the anchor (created/modified, tracked)
+  and excludes unchanged files; the anchor must exist, be a valid batch anchor, and
+  belong to this repo (missing/invalid/cross-repo anchors are rejected).
 - Generates two files in a per-review directory:
   - `run_for_review.txt` — a readable bundle with per-file headings, SHA-256,
     size, truncation status, and fenced file contents.
@@ -154,18 +166,20 @@ aikit review generate --files src/main.rs README.md --json   # also print manife
   (absolute, `..`, or via a symlink whose real target leaves the repo) are rejected.
 - Files are sorted by repo-relative path before caps are applied; every requested
   file appears exactly once in the manifest, whether included, truncated, or omitted.
-- Caps keep the bundle bounded:
+- Caps apply in both modes and keep the bundle bounded:
   - `--max-file-bytes <n>` / `--max-file-lines <n>` truncate an individual file's
     embedded content and record the truncation and the bound.
   - `--max-total-bytes <n>` omits later files once the running total would be
     exceeded, recording `omitted_reason` / `cap_hit`.
-- Batch 3 supports **explicit files only**; anchor-based review generation
-  (`--anchor`) is deferred.
+- For anchor mode, `manifest.json` records `inputs.mode = "changed_since_anchor"`
+  along with the anchor path and id.
 
 ## Current State
 
-Batch 1 (`batch start`, `batch changed`), Batch 2 (`inventory repo`), and Batch 3
-(`review generate --files`) commands are implemented. See
+Batch 1 (`batch start`, `batch changed`), Batch 2 (`inventory repo`), and Batch 3 +
+Batch 4 (`review generate --files` and `review generate --anchor`) commands are
+implemented. The precomputed `--changed <changed.json>` review mode and
+`aikit run script` are not implemented yet. See
 [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
 [`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
 implementation plan, and

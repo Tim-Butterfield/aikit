@@ -47,10 +47,32 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
     let root_canon = fs::canonicalize(&root)
         .map_err(|e| AikitError::other(format!("failed to resolve repo root: {e}")))?;
 
+    // Determine the input mode and the list of input path strings. The CLI enforces
+    // exactly one of --files / --anchor, so the bundle pipeline below is identical
+    // regardless of mode — only the source of the path list differs.
+    let mut inputs = ReviewInputs {
+        mode: "explicit_files".to_string(),
+        anchor_path: None,
+        anchor_id: None,
+        files: Vec::new(),
+    };
+    let input_paths: Vec<String> = if let Some(anchor) = &args.anchor {
+        // Anchor mode: validate the anchor and compute the changed files since it,
+        // reusing the same logic as `batch changed` (missing/invalid/cross-repo
+        // anchors surface the same blocked states).
+        let (anchor_id, paths) = crate::batch::changed_files_since_anchor(&root, anchor)?;
+        inputs.mode = "changed_since_anchor".to_string();
+        inputs.anchor_path = Some(anchor.clone());
+        inputs.anchor_id = Some(anchor_id);
+        paths
+    } else {
+        args.files.clone()
+    };
+
     // First pass: resolve, validate, collect metadata, de-duplicate. No content read.
     let mut metas: Vec<ScopedMeta> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
-    for input in &args.files {
+    for input in &input_paths {
         let (rel, real) = resolve_input(&root_canon, input)?;
         if seen.contains(&rel) {
             continue; // dedupe: every scoped file appears exactly once
@@ -183,8 +205,8 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
         git_head: head,
         generated_at,
         inputs: ReviewInputs {
-            mode: "explicit_files".to_string(),
             files: metas.iter().map(|m| m.rel.clone()).collect(),
+            ..inputs
         },
         limits: ReviewLimits {
             max_file_bytes: args.max_file_bytes,

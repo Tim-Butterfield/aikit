@@ -215,6 +215,64 @@ pub fn changed(args: ChangedArgs) -> Result<(), AikitError> {
     Ok(())
 }
 
+/// Validate an anchor and return `(anchor_id, paths)` where `paths` are the
+/// repo-relative paths of files that currently **exist** and have changed since the
+/// anchor (created or modified, tracked). Reuses the same `git status` parsing as
+/// `batch changed` (tracked changes only; no untracked, no deleted — deleted files
+/// have no content to bundle). Sorted and de-duplicated.
+///
+/// Used by anchor-driven `review generate --anchor`; surfaces the same blocked
+/// states as `batch changed` for missing/invalid/cross-repo anchors.
+pub fn changed_files_since_anchor(
+    repo_root: &Path,
+    anchor_path: &str,
+) -> Result<(String, Vec<String>), AikitError> {
+    let anchor = load_anchor(anchor_path, repo_root)?;
+
+    let porcelain = repo::git_status_changed(repo_root);
+    let mut paths: Vec<String> = Vec::new();
+    let records: Vec<&str> = porcelain.split('\0').collect();
+    let mut i = 0;
+    while i < records.len() {
+        let entry = records[i];
+        i += 1;
+        if entry.len() < 4 {
+            continue;
+        }
+        let xy = &entry[..2];
+        let path = &entry[3..];
+
+        if xy.contains('R') || xy.contains('C') {
+            // Rename/copy: the new path is usually present; consume the original
+            // (deleted) field either way. A staged rename whose destination was then
+            // deleted in the worktree (e.g. `RD`) leaves no file to bundle, so only
+            // include the new path when it actually exists.
+            let orig = records.get(i).copied().filter(|s| !s.is_empty());
+            if orig.is_some() {
+                i += 1;
+            }
+            if !is_excluded(path) && exists_in_worktree(repo_root, path) {
+                paths.push(path.to_string());
+            }
+        } else if xy == "??" {
+            // Untracked is not part of the tracked changed-set (matches batch changed).
+            continue;
+        } else {
+            // Existing created/modified files are bundle-able; deleted files are not.
+            if status_from_xy(xy) != "deleted"
+                && !is_excluded(path)
+                && exists_in_worktree(repo_root, path)
+            {
+                paths.push(path.to_string());
+            }
+        }
+    }
+
+    paths.sort();
+    paths.dedup();
+    Ok((anchor.anchor_id, paths))
+}
+
 /// Read and validate an anchor file, returning `blocked_*` errors on failure.
 fn load_anchor(anchor_path: &str, repo_root: &Path) -> Result<BatchAnchor, AikitError> {
     let content = fs::read_to_string(anchor_path).map_err(|_| {
@@ -350,6 +408,14 @@ fn count(files: &[ChangedFile]) -> Counts {
 
 fn is_excluded(path: &str) -> bool {
     DEFAULT_EXCLUDES.iter().any(|p| path.starts_with(p))
+}
+
+/// Whether a repo-relative path is currently present in the worktree (a regular
+/// file or a symlink; `symlink_metadata` does not follow the link). Used to keep
+/// non-existent changed paths (e.g. a deleted rename destination) out of the
+/// anchor-driven review input set.
+fn exists_in_worktree(repo_root: &Path, rel: &str) -> bool {
+    fs::symlink_metadata(repo_root.join(rel)).is_ok()
 }
 
 /// Stream a file through SHA-256 in fixed-size chunks (bounded memory, even for
