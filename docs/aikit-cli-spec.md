@@ -17,8 +17,8 @@ judgments itself.
 - **No hidden provider/model fallback** — `aikit` invokes no AI providers and
   performs no silent model substitution.
 - **No automatic push/fetch/pull** — `aikit` never mutates remote Git state.
-- **No gate bypass** — `aikit` performs mechanical checks; it does not advance or
-  override any governance gate.
+- **No process-state control** — `aikit` performs mechanical checks; it does not
+  advance, approve, or override any external review or approval step.
 - **No semantic governance judgment** — `aikit` does not decide correctness,
   sufficiency, or compliance.
 - **AI agents perform interpretation and judgment** — the CLI provides inputs and
@@ -173,17 +173,22 @@ be **re-specified and implemented in Rust**, not ported verbatim.
 - Rust preferred.
 - Single compiled binary.
 - Subcommands.
-- No `src/` created yet.
-- Implementation to follow after spec review.
+- Implemented in Rust as a single `aikit` binary with subcommands; see
+  `aikit-implementation-plan.md` and `implementation-manifest.md` for the realized
+  module layout and per-command details.
 
 ## 10. Open Decisions
 
-- exact crate structure;
-- exact config format;
-- exact anchor format;
-- exact review bundle format;
-- exact JSON schemas;
-- exact include/exclude defaults;
-- exact policy scan rules;
+Settled during implementation (see `aikit-implementation-plan.md` and
+`implementation-manifest.md` for specifics):
+
+- crate / module structure;
+- anchor, review-bundle, inventory, and run-record formats and their JSON schemas;
+- default include/exclude rules;
+- best-effort policy scan rules.
+
+Still open:
+
+- exact config format (no config file is read yet);
 - install method;
 - whether to support agent wrapper files later.

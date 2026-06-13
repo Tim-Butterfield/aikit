@@ -92,7 +92,10 @@ not output locations. Only `.zsh` (/bin/zsh) and `.sh` (/bin/sh) are supported; 
 interpreter is chosen from the extension, never from a shebang. The run record \
 (copied script, stdout.txt, stderr.txt, run.json) is written under the default output \
 directory .aikit/outputs/runs/<id>/; override with --output <dir> (`.scratch` output is \
-used only when requested explicitly)."
+used only when requested explicitly).",
+        after_help = "Examples:\n  \
+aikit run script .aikit/temp/build.sh\n  \
+aikit run script .scratch/work/temp/task.zsh --print"
     )]
     Run(RunCli),
 }

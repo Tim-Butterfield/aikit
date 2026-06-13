@@ -4,7 +4,7 @@
 
 - This manifest defines the expected file changes for implementation batches.
 - It is a lightweight guard against file sprawl and ambiguity.
-- It is not a methodology artifact or gate system.
+- It is not a methodology artifact or approval system.
 - It must be updated/reviewed before each implementation batch.
 - After each implementation batch, actual files must be compared to this manifest before commit.
 
@@ -16,8 +16,9 @@
 - Batch 4 is complete and committed.
 - Output-location policy correction is complete and committed (default output root is
   always `.aikit/outputs/`) — see "Output Location Policy Correction" below.
-- Batch 5 is complete and is being committed in this batch (governed script runner).
-- Next implementation scope: Batch 6 (local integration/polish), not yet started.
+- Batch 5 is complete and committed (governed script runner).
+- Batch 6 is complete and is being committed in this batch (local integration/polish).
+- All six initial implementation batches are complete; no further batches are planned.
 
 ## 3. Classification Values
 
@@ -658,6 +659,83 @@ Before committing Batch 5 implementation, produce an expected-vs-actual file rep
 - unexpected files removed or justified;
 - final list of staged files.
 
+## Batch 6 Completed Scope
+
+Batch 6 is complete and is being committed in this batch. It is final local
+integration and polish only — no new behavior, no new command family, no broadening
+of the Batch 5 script-runner policy. It delivered:
+
+- a docs/help/spec consistency review across README, the CLI spec, and every durable
+  help surface (`aikit --help`; `batch`, `inventory`, `review`, `run` parents; and the
+  `start`, `changed`, `inventory repo`, `review generate`, `run script` leaves);
+- small CLI help polish: the `aikit run --help` parent now carries an `Examples:`
+  block, matching the example blocks already present on `batch`, `inventory`, and
+  `review` (cross-family help consistency);
+- README final alignment: the "Building and Usage" heading no longer carries a stale
+  per-batch label now that it documents all command families, and the unimplemented
+  precomputed `--changed <changed.json>` review mode is described as intentionally not
+  implemented (rather than as remaining work);
+- CLI spec final alignment: the "Implementation Direction" section no longer states
+  that no `src/` exists / that implementation is pending, and instead points at the
+  implementation plan and this manifest for the realized layout;
+- a new end-to-end integration test (`tests/cli_integration.rs`) exercising the
+  intended local workflow in one throwaway Git repo — anchor → modify a tracked file →
+  `batch changed --anchor` → `inventory repo` → `review generate --anchor` → stage a
+  harmless script under `.aikit/temp/` → `run script --print` — asserting the
+  artifacts and metadata line up across commands. The test is deterministic (it
+  changes a tracked file so detection is via `git status`, not the mtime heuristic, and
+  uses `--print` so no interpreter is invoked and no run directory is created).
+
+Confirmed during Batch 6 and unchanged:
+
+- the default output root remains `.aikit/outputs/`, with `.scratch` opt-in only via
+  explicit `--output`;
+- batch anchors remain durable and explicitly passed via `--anchor`;
+- `review generate` supports `--files` and `--anchor`; the precomputed
+  `--changed <changed.json>` mode remains absent;
+- `run script` allowed input locations, the `.zsh`/`.sh`-only interpreter map, and the
+  best-effort (not-a-sandbox) framing are unchanged;
+- no remote execution, Python/Node execution, package-manager orchestration, cleanup
+  commands, release/install automation, or runtime provider/model/agent logic was
+  added;
+- generated/local-only artifacts remain uncommitted.
+
+## Batch 6 Expected-vs-Actual Verification - Completed
+
+Allowed Batch 6 committed file changes and what actually changed:
+
+| Path | Allowed Classification | Actual |
+|---|---|---|
+| `README.md` | modified (final usage/example alignment) | modified — heading label + `--changed` wording |
+| `docs/aikit-cli-spec.md` | modified (final behavior/help/output alignment) | modified — Implementation Direction status lines |
+| `docs/implementation-manifest.md` | modified (record Batch 6 completion) | modified — this update |
+| `src/cli.rs` | modified (help polish only) | modified — `run` parent `Examples:` block |
+| `tests/cli_integration.rs` | new (optional end-to-end test) | new — local-workflow integration test |
+| `src/output.rs` | modified only if needed | unchanged — no wording/path change needed |
+| `src/formats.rs` | modified only if needed | unchanged — no schema change needed |
+| `src/errors.rs` | modified only if needed | unchanged — no error wording change needed |
+| `tests/cli_batch.rs` | modified only if needed | unchanged — existing coverage sufficient |
+| `tests/cli_inventory.rs` | modified only if needed | unchanged — existing coverage sufficient |
+| `tests/cli_review.rs` | modified only if needed | unchanged — existing coverage sufficient |
+| `tests/cli_run_script.rs` | modified only if needed | unchanged — existing coverage sufficient |
+
+Notes and acceptable deviations:
+
+- `Cargo.toml` / `Cargo.lock` unchanged — no new dependency was needed (Batch 6 added
+  no features).
+- The four pre-existing test files were left unchanged because the consistency review
+  found their per-family coverage adequate; the integration gap was filled by the new
+  `tests/cli_integration.rs` rather than by expanding them.
+- Generated/local-only artifacts observed and not staged: `target/`, `.scratch/`,
+  external harness state, `docs/.DS_Store`, and any `.aikit/outputs/` produced during
+  checks.
+- Deferred files remain absent: `docs/agent-usage.md` and `.github/workflows/`.
+- Deferred behaviors remain absent: remote execution, Python/Node execution,
+  package-manager orchestration, automatic cleanup commands, release/install
+  automation, and the precomputed `--changed <changed.json>` review mode.
+
 ## 11. Future Batch Manifest Updates
 
-- Before Batch 6, update this manifest for local integration/polish.
+- None planned. All six initial implementation batches (Batch 1–6) are complete. No
+  further batch manifest updates are planned for the initial implementation unless new
+  user-approved work is added later.

@@ -13,8 +13,9 @@
   scaffold, repo-root detection, anchor JSON, changed-file detection, a deterministic
   hashed repository inventory, bounded review-bundle generation, and a governed local
   script runner (not a security sandbox).
-- Remaining: the precomputed `--changed <changed.json>` review mode is not
-  implemented (anchor mode covers the changed-since-anchor case).
+- Intentionally not implemented: the precomputed `--changed <changed.json>` review
+  mode (anchor mode covers the changed-since-anchor case; this would only be added
+  later if a real need appears).
 
 ## Purpose
 
@@ -72,7 +73,7 @@
   consumer.
 - `aikit` is **not** Architect Toolkit-specific.
 
-## Building and Usage (Batch 1)
+## Building and Usage
 
 `aikit` is a standard Rust binary. Build and install locally:
 
