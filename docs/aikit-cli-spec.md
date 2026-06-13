@@ -125,11 +125,19 @@ implementation commitments.
 
 ## 6. Output Conventions
 
-- Default local outputs should be project-local.
-- `.scratch/work/outputs/` is a preferred convention when present.
-- Command output should be clear for humans.
-- JSON output should be available where useful.
-- No command should require committing generated output.
+- The default output root is always `.aikit/outputs/` under the detected repo root.
+- Command-family default output directories are:
+  - `.aikit/outputs/batches/`
+  - `.aikit/outputs/inventory/`
+  - `.aikit/outputs/reviews/`
+  - `.aikit/outputs/runs/`
+- `--output <path>` overrides the default output root; a relative `--output` resolves
+  under the repo root.
+- `.scratch` is never auto-selected and is never auto-created. It may be used only when
+  explicitly requested through `--output` (for example, `--output .scratch/work/outputs/aikit`).
+- Commands that write files print the exact created artifact paths in human output, and
+  commands that support `--json` include machine-readable artifact paths in JSON output.
+- Generated/local output directories are local-only and should not be committed.
 
 ## 7. Blocked States
 
