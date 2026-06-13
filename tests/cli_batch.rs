@@ -167,27 +167,7 @@ fn batch_start_fails_outside_git_repo_with_blocked_state() {
 // ---- output-root selection ----
 
 #[test]
-fn output_root_uses_scratch_work_when_present() {
-    let repo = init_repo();
-    fs::create_dir_all(repo.path().join(".scratch/work/outputs")).unwrap();
-    aikit(repo.path())
-        .args(["batch", "start"])
-        .assert()
-        .success();
-    assert!(
-        repo.path()
-            .join(".scratch/work/outputs/aikit/batches")
-            .is_dir(),
-        "expected anchor under .scratch/work/outputs/aikit/batches"
-    );
-    assert!(
-        !repo.path().join(".aikit/outputs").exists(),
-        "fallback .aikit/outputs should not be created when scratch parent exists"
-    );
-}
-
-#[test]
-fn output_root_falls_back_to_aikit_outputs() {
+fn batch_start_default_output_is_aikit_outputs() {
     let repo = init_repo();
     aikit(repo.path())
         .args(["batch", "start"])
@@ -195,7 +175,94 @@ fn output_root_falls_back_to_aikit_outputs() {
         .success();
     assert!(
         repo.path().join(".aikit/outputs/batches").is_dir(),
-        "expected fallback anchor under .aikit/outputs/batches"
+        "default anchor output under .aikit/outputs/batches"
+    );
+}
+
+#[test]
+fn batch_start_default_ignores_scratch_even_when_present() {
+    let repo = init_repo();
+    // The presence of .scratch/work/outputs/ must NOT change the default root.
+    fs::create_dir_all(repo.path().join(".scratch/work/outputs")).unwrap();
+    aikit(repo.path())
+        .args(["batch", "start"])
+        .assert()
+        .success();
+    assert!(
+        repo.path().join(".aikit/outputs/batches").is_dir(),
+        "default output stays under .aikit/outputs even when .scratch exists"
+    );
+    assert!(
+        !repo.path().join(".scratch/work/outputs/aikit").exists(),
+        ".scratch must never be auto-selected for output"
+    );
+}
+
+#[test]
+fn batch_start_output_override_is_honored() {
+    let repo = init_repo();
+    // .scratch is opt-in only via --output.
+    aikit(repo.path())
+        .args(["batch", "start", "--output", ".scratch/work/outputs/aikit"])
+        .assert()
+        .success();
+    assert!(
+        repo.path()
+            .join(".scratch/work/outputs/aikit/batches")
+            .is_dir(),
+        "explicit --output should be used as requested"
+    );
+    assert!(
+        !repo.path().join(".aikit/outputs").exists(),
+        "default .aikit/outputs should not be created when --output is given"
+    );
+}
+
+#[test]
+fn batch_start_relative_output_resolves_under_repo_root_from_subdir() {
+    let repo = init_repo();
+    let subdir = repo.path().join("sub");
+    fs::create_dir_all(&subdir).unwrap();
+    // Run from a subdirectory; a relative --output must resolve under the repo root.
+    aikit(&subdir)
+        .args(["batch", "start", "--output", "out"])
+        .assert()
+        .success();
+    assert!(
+        repo.path().join("out/batches").is_dir(),
+        "relative --output resolves under the repo root"
+    );
+    assert!(
+        !subdir.join("out").exists(),
+        "relative --output must not be created under the command's cwd"
+    );
+}
+
+#[test]
+fn batch_start_human_output_lists_created_anchor_path() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args(["batch", "start"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(".aikit/outputs/batches/"));
+}
+
+#[test]
+fn batch_start_json_includes_created_anchor_path() {
+    let repo = init_repo();
+    let out = aikit(repo.path())
+        .args(["batch", "start", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&out).unwrap();
+    let path = json["anchor_path"].as_str().unwrap();
+    assert!(
+        path.starts_with(".aikit/outputs/batches/"),
+        "JSON anchor_path should be the created repo-relative path: {path}"
     );
 }
 

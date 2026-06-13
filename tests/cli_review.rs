@@ -370,20 +370,21 @@ fn nested_backticks_do_not_break_the_bundle() {
 // ---- output location ----
 
 #[test]
-fn fallback_output_to_aikit_outputs_reviews() {
+fn review_default_output_is_aikit_outputs_reviews() {
     let repo = init_repo();
     aikit(repo.path())
         .args(["review", "generate", "--files", "README.md"])
         .assert()
-        .success();
+        .success()
+        .stdout(predicates::str::contains(".aikit/outputs/reviews/"));
     assert!(
         repo.path().join(".aikit/outputs/reviews").is_dir(),
-        "fallback review output under .aikit/outputs/reviews"
+        "default review output under .aikit/outputs/reviews"
     );
 }
 
 #[test]
-fn preferred_output_uses_scratch_work_when_present() {
+fn review_default_ignores_scratch_even_when_present() {
     let repo = init_repo();
     fs::create_dir_all(repo.path().join(".scratch/work/outputs")).unwrap();
     aikit(repo.path())
@@ -391,13 +392,59 @@ fn preferred_output_uses_scratch_work_when_present() {
         .assert()
         .success();
     assert!(
+        repo.path().join(".aikit/outputs/reviews").is_dir(),
+        "default output stays under .aikit/outputs even when .scratch exists"
+    );
+    assert!(
+        !repo.path().join(".scratch/work/outputs/aikit").exists(),
+        ".scratch must never be auto-selected for output"
+    );
+}
+
+#[test]
+fn review_output_override_is_honored() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args([
+            "review",
+            "generate",
+            "--files",
+            "README.md",
+            "--output",
+            ".scratch/work/outputs/aikit",
+        ])
+        .assert()
+        .success();
+    assert!(
         repo.path()
             .join(".scratch/work/outputs/aikit/reviews")
             .is_dir(),
-        "preferred review output under .scratch/work/outputs/aikit/reviews"
+        "explicit --output should be used as requested"
     );
     assert!(
         !repo.path().join(".aikit/outputs").exists(),
-        "fallback must not be used when scratch parent exists"
+        "default .aikit/outputs should not be created when --output is given"
+    );
+}
+
+#[test]
+fn review_json_includes_written_artifact_paths() {
+    let repo = init_repo();
+    let json = review_json(repo.path(), &["README.md"], &[]);
+    let written: Vec<String> = json["written"]
+        .as_array()
+        .expect("written array present")
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        written
+            .iter()
+            .any(|w| w.starts_with(".aikit/outputs/reviews/") && w.ends_with("run_for_review.txt")),
+        "written must list run_for_review.txt: {written:?}"
+    );
+    assert!(
+        written.iter().any(|w| w.ends_with("manifest.json")),
+        "written must list manifest.json: {written:?}"
     );
 }

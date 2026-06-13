@@ -84,14 +84,13 @@ Run inside a Git repository. Mark an anchor before a unit of work, then list wha
 changed since:
 
 ```sh
-# Create a batch anchor (writes JSON under the local output directory).
+# Create a batch anchor (writes JSON under the default output directory).
 aikit batch start
 # → Batch anchor created:
-#     .scratch/work/outputs/aikit/batches/<anchor-id>.json
-#   (or .aikit/outputs/batches/<anchor-id>.json when .scratch/work/outputs/ is absent)
+#     .aikit/outputs/batches/<anchor-id>.json
 
 # After doing some work, list created/modified files since the anchor.
-aikit batch changed --anchor .scratch/work/outputs/aikit/batches/<anchor-id>.json
+aikit batch changed --anchor .aikit/outputs/batches/<anchor-id>.json
 
 # Include new untracked files (best-effort mtime heuristic) and machine-readable JSON:
 aikit batch changed --anchor <anchor.json> --include-untracked --hash --json
@@ -99,7 +98,11 @@ aikit batch changed --anchor <anchor.json> --include-untracked --hash --json
 
 Notes:
 
-- Output files are **local-only** and never need committing.
+- The default output root is always `.aikit/outputs/`. `.scratch` is never
+  auto-selected or auto-created; use it only by passing `--output .scratch/...`.
+- Output under `.aikit/outputs/` is **local-only** and should not be committed.
+- Commands that create files print the exact created paths (and include them in
+  `--json` output), so you never have to infer file names.
 - Tracked changes come from `git status`; untracked files require
   `--include-untracked`. Deletions are detected for tracked files only.
 - Every command has detailed `--help`. `aikit` calls no AI providers and has no
@@ -114,10 +117,10 @@ aikit inventory repo          # human summary + writes inventory.json/.txt
 aikit inventory repo --json   # also prints the inventory JSON to stdout
 ```
 
-- Output is written under the local output directory:
-  `.scratch/work/outputs/aikit/inventory/<id>/` when `.scratch/work/outputs/`
-  exists, otherwise `.aikit/outputs/inventory/<id>/` (override with `--output <dir>`).
-  Both `inventory.json` and `inventory.txt` are produced; output is local-only.
+- Output is written by default under `.aikit/outputs/inventory/<id>/` (override the
+  root with `--output <dir>`). Both `inventory.json` and `inventory.txt` are produced;
+  the `--json` output includes a `written` array of the created file paths. Output is
+  local-only.
 - Traversal is gitignore-aware and **always** excludes `.git/` and common
   build/dependency/output directories (`target/`, `node_modules/`, `dist/`,
   `build/`, `.venv/`, `venv/`, and aikit's own output dirs), matched by directory
@@ -144,10 +147,9 @@ aikit review generate --files src/main.rs README.md --json   # also print manife
   - `manifest.json` — `schema_version`, `kind`, `review_id`, `repo_root`,
     `git_head`, `generated_at`, `inputs`, `limits`, `files`, `bundle_path`, and
     `totals`.
-- Output is written under the local output directory:
-  `.scratch/work/outputs/aikit/reviews/<id>/` when `.scratch/work/outputs/`
-  exists, otherwise `.aikit/outputs/reviews/<id>/` (override with `--output <dir>`).
-  Output is local-only.
+- Output is written by default under `.aikit/outputs/reviews/<id>/` (override the root
+  with `--output <dir>`). The `--json` output includes a `written` array of the
+  created file paths. Output is local-only.
 - Input paths are resolved relative to the repo root; paths that escape the repo
   (absolute, `..`, or via a symlink whose real target leaves the repo) are rejected.
 - Files are sorted by repo-relative path before caps are applied; every requested

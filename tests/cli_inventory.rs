@@ -267,16 +267,17 @@ fn max_files_limits_deterministically_and_reports() {
 // ---- output location ----
 
 #[test]
-fn text_and_json_written_in_fallback_inventory_dir() {
+fn inventory_default_output_is_aikit_outputs() {
     let repo = init_repo();
     aikit(repo.path())
         .args(["inventory", "repo"])
         .assert()
         .success()
-        .stdout(predicates::str::contains("Repository inventory written"));
+        .stdout(predicates::str::contains("Repository inventory written"))
+        .stdout(predicates::str::contains(".aikit/outputs/inventory/"));
 
     let base = repo.path().join(".aikit/outputs/inventory");
-    assert!(base.is_dir(), "fallback inventory base should exist");
+    assert!(base.is_dir(), "default inventory base should exist");
     let dir = find_inventory_dir(&base);
     assert!(
         dir.join("inventory.json").is_file(),
@@ -286,7 +287,7 @@ fn text_and_json_written_in_fallback_inventory_dir() {
 }
 
 #[test]
-fn preferred_output_uses_scratch_work_when_present() {
+fn inventory_default_ignores_scratch_even_when_present() {
     let repo = init_repo();
     fs::create_dir_all(repo.path().join(".scratch/work/outputs")).unwrap();
     aikit(repo.path())
@@ -294,14 +295,58 @@ fn preferred_output_uses_scratch_work_when_present() {
         .assert()
         .success();
     assert!(
+        repo.path().join(".aikit/outputs/inventory").is_dir(),
+        "default output stays under .aikit/outputs even when .scratch exists"
+    );
+    assert!(
+        !repo.path().join(".scratch/work/outputs/aikit").exists(),
+        ".scratch must never be auto-selected for output"
+    );
+}
+
+#[test]
+fn inventory_output_override_is_honored() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args([
+            "inventory",
+            "repo",
+            "--output",
+            ".scratch/work/outputs/aikit",
+        ])
+        .assert()
+        .success();
+    assert!(
         repo.path()
             .join(".scratch/work/outputs/aikit/inventory")
             .is_dir(),
-        "preferred inventory output under .scratch/work/outputs/aikit/inventory"
+        "explicit --output should be used as requested"
     );
     assert!(
         !repo.path().join(".aikit/outputs").exists(),
-        "fallback must not be used when scratch parent exists"
+        "default .aikit/outputs should not be created when --output is given"
+    );
+}
+
+#[test]
+fn inventory_json_includes_written_artifact_paths() {
+    let repo = init_repo();
+    let json = inventory_json(repo.path(), &[]);
+    let written: Vec<String> = json["written"]
+        .as_array()
+        .expect("written array present")
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        written
+            .iter()
+            .any(|w| w.starts_with(".aikit/outputs/inventory/") && w.ends_with("inventory.json")),
+        "written must list the created inventory.json: {written:?}"
+    );
+    assert!(
+        written.iter().any(|w| w.ends_with("inventory.txt")),
+        "written must list the created inventory.txt: {written:?}"
     );
 }
 

@@ -301,56 +301,50 @@ Do not implement non-Git mode initially.
 
 ## 8. Output Location Convention
 
-When a command writes durable local output, default to:
-
-```text
-.scratch/work/outputs/aikit/
-```
-
-under the detected repo root if `.scratch/work/outputs/` exists.
-
-If `.scratch/work/outputs/` does not exist, default to:
+The default output root is always:
 
 ```text
 .aikit/outputs/
 ```
 
-This fallback avoids requiring every project to adopt the `.scratch/work/` convention.
+under the detected repo root. `.scratch` is **never** auto-selected and `.scratch`
+directories are never auto-created. `.scratch` may be used only when the caller
+explicitly passes `--output`.
 
-Initial output folders:
-
-```text
-.scratch/work/outputs/aikit/batches/
-.scratch/work/outputs/aikit/reviews/
-.scratch/work/outputs/aikit/inventory/
-.scratch/work/outputs/aikit/runs/
-```
-
-or fallback:
+Command-family output folders (default):
 
 ```text
 .aikit/outputs/batches/
-.aikit/outputs/reviews/
 .aikit/outputs/inventory/
+.aikit/outputs/reviews/
 .aikit/outputs/runs/
 ```
 
-Open decision:
+(`runs/` is reserved for the future `aikit run script`; it is not implemented yet.)
+
+Output-root selection rule (deterministic):
+
+- If `--output <dir>` is given, that directory is the output root: aikit creates the
+  same per-command subfolders (`batches/`, `inventory/`, `reviews/`, `runs/`) under it.
+  Passing `--output .scratch/work/outputs/aikit` is how a project opts into `.scratch`.
+- If `--output` is omitted, the output root is always `.aikit/outputs/` — regardless of
+  whether `.scratch/work/outputs/` happens to exist.
+- aikit never auto-creates `.scratch/`, `.scratch/work/`, or `.scratch/work/outputs/`.
+
+Reporting and ignore rules:
+
+- `.aikit/outputs/` is local output and should not be committed.
+- Commands that create files print the exact created artifact paths in human output,
+  and include them (machine-readable) in JSON output (e.g. an `anchor_path` or a
+  `written` array).
+- Anchor files are durable output artifacts and are not auto-cleaned.
+- Do not automatically modify Git ignore files; create output directories only when
+  needed.
+
+Open decision (unchanged):
 
 - whether `.aikit/` should be auto-added to `.git/info/exclude` or only documented.
-
-Initial recommendation:
-
-- do not automatically modify Git ignore files;
-- create output directories only when needed;
-- warn when output directory is not ignored.
-
-Output-root selection and creation rule (deterministic):
-
-- `aikit` never creates the `.scratch/work/outputs/` parent itself — that directory is the project's convention to opt into, not aikit's to materialize.
-- If `.scratch/work/outputs/` already exists, aikit creates and uses its own `aikit/` subtree under it.
-- Otherwise aikit falls back to creating and using `.aikit/outputs/` under the repo root.
-- `--output <dir>` overrides the root: it is treated as a directory under which aikit creates the same per-command subfolders (`batches/`, `reviews/`, `inventory/`, `runs/`).
+  Initial recommendation: document it; do not modify Git ignore files automatically.
 
 ## 9. Data Formats
 
@@ -363,7 +357,7 @@ Use JSON for generated metadata.
 Recommended file name:
 
 ```text
-.scratch/work/outputs/aikit/batches/<anchor-id>.json
+.aikit/outputs/batches/<anchor-id>.json
 ```
 
 Anchor ID format:
@@ -406,7 +400,7 @@ Recommended JSON shape:
   "kind": "aikit.batch_changed",
   "anchor": {
     "anchor_id": "20260612-183015-11d227b",
-    "path": ".scratch/work/outputs/aikit/batches/20260612-183015-11d227b.json"
+    "path": ".aikit/outputs/batches/20260612-183015-11d227b.json"
   },
   "repo_root": "/path/to/repo",
   "generated_at": "2026-06-12T18:45:00Z",
@@ -433,8 +427,8 @@ Recommended JSON shape:
 Recommended default output:
 
 ```text
-.scratch/work/outputs/aikit/reviews/<review-id>/run_for_review.txt
-.scratch/work/outputs/aikit/reviews/<review-id>/manifest.json
+.aikit/outputs/reviews/<review-id>/run_for_review.txt
+.aikit/outputs/reviews/<review-id>/manifest.json
 ```
 
 The text bundle can keep the historically useful `run_for_review.txt` name initially because that is recognizable in existing workflows.
@@ -507,8 +501,8 @@ Cap and ordering behavior must be deterministic:
 Recommended default output:
 
 ```text
-.scratch/work/outputs/aikit/inventory/<inventory-id>/inventory.json
-.scratch/work/outputs/aikit/inventory/<inventory-id>/inventory.txt
+.aikit/outputs/inventory/<inventory-id>/inventory.json
+.aikit/outputs/inventory/<inventory-id>/inventory.txt
 ```
 
 Recommended JSON shape:
@@ -541,10 +535,10 @@ Recommended JSON shape:
 Recommended default output:
 
 ```text
-.scratch/work/outputs/aikit/runs/<run-id>/run.json
-.scratch/work/outputs/aikit/runs/<run-id>/stdout.txt
-.scratch/work/outputs/aikit/runs/<run-id>/stderr.txt
-.scratch/work/outputs/aikit/runs/<run-id>/script.<ext>
+.aikit/outputs/runs/<run-id>/run.json
+.aikit/outputs/runs/<run-id>/stdout.txt
+.aikit/outputs/runs/<run-id>/stderr.txt
+.aikit/outputs/runs/<run-id>/script.<ext>
 ```
 
 The copied script retains its original extension (e.g. `script.zsh`) so it stays readable and re-runnable during an audit; do not rename it to a bare `script-copy`.
@@ -635,13 +629,14 @@ Example:
 
 ```text
 Batch anchor created:
-  .scratch/work/outputs/aikit/batches/20260612-183015-11d227b.json
+  .aikit/outputs/batches/20260612-183015-11d227b.json
 ```
 
 ### Test Cases
 
-- creates anchor in repo with `.scratch/work/outputs/`;
-- creates fallback output in repo without `.scratch/work/outputs/`;
+- creates anchor under the default `.aikit/outputs/batches/`;
+- default output stays under `.aikit/outputs/` even when `.scratch/work/outputs/` exists;
+- `--output <dir>` writes under the requested directory (e.g. `.scratch/...`);
 - JSON contains schema version, repo root, HEAD, branch, status, timestamp;
 - fails outside Git repo;
 - `--json` prints machine-readable output.

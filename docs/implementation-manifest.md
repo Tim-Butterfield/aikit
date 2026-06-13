@@ -12,9 +12,11 @@
 
 - Batch 1 is complete and committed.
 - Batch 2 is complete and committed.
-- Current manifest scope: Batch 3.
-- Batch 3 has not yet been implemented.
-- This Batch 3 manifest update is expected to be reviewed before source changes for Batch 3 begin, and should not be committed until reviewed.
+- Batch 3 is complete and committed.
+- A targeted output-location policy correction (default output root is now always
+  `.aikit/outputs/`) has been applied before Batch 4 — see "Output Location Policy
+  Correction" below.
+- Next implementation scope: Batch 4 (review generation from anchors), not yet started.
 
 ## 3. Classification Values
 
@@ -350,6 +352,32 @@ Before committing Batch 3 implementation, produce an expected-vs-actual file rep
 - unexpected files created;
 - unexpected files removed or justified;
 - final list of staged files.
+
+## Output Location Policy Correction - Completed
+
+A targeted correction applied before Batch 4 (commit "Default aikit outputs to .aikit"):
+
+- The default output root is **always** `.aikit/outputs/`, with command-family
+  subfolders `.aikit/outputs/{batches,inventory,reviews,runs}/` (`runs/` reserved for
+  the future `aikit run script`).
+- `.scratch` is **never** auto-selected, and aikit never auto-creates `.scratch/`,
+  `.scratch/work/`, or `.scratch/work/outputs/`. `.scratch` is opt-in only via
+  `--output .scratch/...`.
+- `--output <path>` always wins and is used as the output root verbatim.
+- Commands that create files print exact created artifact paths in human output and
+  include them in `--json` output (`batch start` → `anchor_path`; `inventory repo`
+  and `review generate` → a `written` array).
+- Anchor files remain durable artifacts and are not auto-cleaned; anchor-consuming
+  commands still require explicit `--anchor <anchor.json>`.
+
+This supersedes the earlier ".scratch/work/outputs/aikit/ preferred when present,
+else .aikit/outputs/" wording recorded in the historical Batch 1/2/3 sections above;
+those records are retained as history. Files touched by the correction: `src/output.rs`
+(always `.aikit/outputs`), `src/batch.rs` (relative `--output` resolves under the repo
+root), `src/cli.rs` (help), `src/inventory.rs` + `src/review.rs` (print a `written` array
+of created paths in `--json`, without embedding paths in the durable on-disk artifacts),
+the three test files, `README.md`, and `docs/aikit-implementation-plan.md` (§8). No new
+dependencies; no `src/formats.rs` schema change; no runtime provider/model/agent logic.
 
 ## 11. Future Batch Manifest Updates
 

@@ -118,6 +118,18 @@ pub fn repo(args: InventoryRepoArgs) -> Result<(), AikitError> {
         short_head(&head)
     );
 
+    // Resolve the output paths first so the inventory can record exactly what it
+    // creates (under <output-root>/inventory/<inventory-id>/).
+    let dir = output::inventory_dir(&out_root).join(&inventory_id);
+    fs::create_dir_all(&dir).map_err(|e| {
+        AikitError::other(format!(
+            "failed to create output dir {}: {e}",
+            dir.display()
+        ))
+    })?;
+    let json_path = dir.join("inventory.json");
+    let txt_path = dir.join("inventory.txt");
+
     let inventory = RepoInventory {
         schema_version: SCHEMA_VERSION,
         kind: KIND_REPO_INVENTORY.to_string(),
@@ -130,26 +142,32 @@ pub fn repo(args: InventoryRepoArgs) -> Result<(), AikitError> {
         notes: if notes.is_empty() { None } else { Some(notes) },
     };
 
-    // Write JSON + text inventory under <output-root>/inventory/<inventory-id>/.
-    let dir = output::inventory_dir(&out_root).join(&inventory_id);
-    fs::create_dir_all(&dir).map_err(|e| {
-        AikitError::other(format!(
-            "failed to create output dir {}: {e}",
-            dir.display()
-        ))
-    })?;
-
+    // The on-disk inventory.json stays a pure, reproducible artifact (it does not
+    // embed its own location). The created paths are reported separately.
     let json = serde_json::to_string_pretty(&inventory)
         .map_err(|e| AikitError::other(format!("failed to serialize inventory: {e}")))?;
-    let json_path = dir.join("inventory.json");
     write_with_newline(&json_path, &json)?;
-
-    let txt_path = dir.join("inventory.txt");
     fs::write(&txt_path, render_text(&inventory))
         .map_err(|e| AikitError::other(format!("failed to write {}: {e}", txt_path.display())))?;
 
+    let written = vec![
+        display_relative(&root, &json_path),
+        display_relative(&root, &txt_path),
+    ];
+
     if args.json {
-        println!("{json}");
+        // Stdout adds the created artifact paths alongside the inventory fields,
+        // without altering the on-disk artifact (mirrors `batch start`).
+        let mut value = serde_json::to_value(&inventory)
+            .map_err(|e| AikitError::other(format!("failed to serialize inventory: {e}")))?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("written".to_string(), serde_json::json!(written));
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value)
+                .map_err(|e| AikitError::other(format!("failed to serialize output: {e}")))?
+        );
     } else {
         println!("Repository inventory written:");
         println!("  {}", display_relative(&root, &json_path));

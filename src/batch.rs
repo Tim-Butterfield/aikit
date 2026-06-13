@@ -59,7 +59,15 @@ pub fn start(args: StartArgs) -> Result<(), AikitError> {
         filesystem_anchor_time: created_at,
     };
 
-    let out_root = output::select_output_root(&root, args.output.as_deref());
+    // A relative --output is resolved against the repo root (not the cwd), matching
+    // inventory/review, so the anchor lands under <repo>/<output>/batches regardless
+    // of the directory the command is run from.
+    let selected = output::select_output_root(&root, args.output.as_deref());
+    let out_root = if selected.is_absolute() {
+        selected
+    } else {
+        root.join(selected)
+    };
     let batches = output::batches_dir(&out_root);
     fs::create_dir_all(&batches).map_err(|e| {
         AikitError::other(format!(

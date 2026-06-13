@@ -96,6 +96,7 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
 
     // Second pass: hash, apply caps, write the bundle incrementally, build manifest.
     let bundle_path = dir.join(BUNDLE_NAME);
+    let manifest_path = dir.join(MANIFEST_NAME);
     let mut bundle = BufWriter::new(File::create(&bundle_path).map_err(|e| {
         AikitError::other(format!("failed to write {}: {e}", bundle_path.display()))
     })?);
@@ -195,13 +196,30 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
         totals,
     };
 
+    // The on-disk manifest.json stays a pure, reproducible artifact (it does not
+    // embed its own location). The created paths are reported separately.
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| AikitError::other(format!("failed to serialize manifest: {e}")))?;
-    let manifest_path = dir.join(MANIFEST_NAME);
     write_with_newline(&manifest_path, &json)?;
 
+    let written = vec![
+        display_relative(&root, &bundle_path),
+        display_relative(&root, &manifest_path),
+    ];
+
     if args.json {
-        println!("{json}");
+        // Stdout adds the created artifact paths alongside the manifest fields,
+        // without altering the on-disk artifact (mirrors `batch start`).
+        let mut value = serde_json::to_value(&manifest)
+            .map_err(|e| AikitError::other(format!("failed to serialize manifest: {e}")))?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("written".to_string(), serde_json::json!(written));
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value)
+                .map_err(|e| AikitError::other(format!("failed to serialize output: {e}")))?
+        );
     } else {
         println!("Review bundle written:");
         println!("  {}", display_relative(&root, &bundle_path));

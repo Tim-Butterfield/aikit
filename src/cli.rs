@@ -18,7 +18,7 @@ or model. Commands operate on the current Git repository and write machine-reada
 where useful.",
     after_help = "Examples:\n  \
 aikit batch start\n  \
-aikit batch changed --anchor .scratch/work/outputs/aikit/batches/<anchor-id>.json\n\n\
+aikit batch changed --anchor .aikit/outputs/batches/<anchor-id>.json\n\n\
 Exit codes: 0 success, 1 command failure, 2 invalid usage, 3 blocked state."
 )]
 pub struct Cli {
@@ -34,12 +34,11 @@ pub enum Command {
 report what was created or modified since. Use `batch start` to create an anchor, then \
 `batch changed --anchor <file>` to list changes.\n\n\
 `batch start` writes a JSON anchor under the local output directory \
-(.scratch/work/outputs/aikit/batches/ when .scratch/work/outputs/ exists, otherwise \
-.aikit/outputs/batches/); output is local-only and never needs committing. Both \
-subcommands support --json for machine-readable output.",
+(.aikit/outputs/batches/ by default; override with --output <dir>); output is local-only \
+and never needs committing. Both subcommands support --json for machine-readable output.",
         after_help = "Examples:\n  \
 aikit batch start\n  \
-aikit batch changed --anchor .scratch/work/outputs/aikit/batches/<anchor-id>.json --json"
+aikit batch changed --anchor .aikit/outputs/batches/<anchor-id>.json --json"
     )]
     Batch(BatchCli),
 
@@ -50,11 +49,11 @@ hashed listing of every included file. Use it to capture a reproducible snapshot
 contents for review or comparison. Traversal is gitignore-aware and always excludes `.git/` \
 and common build/dependency/output directories (matched by directory name, not substring).\n\n\
 The `repo` subcommand writes inventory.json and inventory.txt under the local output \
-directory (.scratch/work/outputs/aikit/inventory/<id>/ when .scratch/work/outputs/ exists, \
-otherwise .aikit/outputs/inventory/<id>/); output is local-only. Key flags (on `inventory \
-repo`): --json (also print JSON to stdout), --include-ignored (include .gitignore'd files; \
-always-excluded dirs still apply), --max-files <n> (limit deterministically after sorting), \
-and --output <dir> (override the output root).",
+directory (.aikit/outputs/inventory/<id>/ by default; override with --output <dir>); output \
+is local-only. Key flags (on `inventory repo`): --json (also print JSON to stdout, including \
+the created file paths), --include-ignored (include .gitignore'd files; always-excluded dirs \
+still apply), --max-files <n> (limit deterministically after sorting), and --output <dir> \
+(override the output root).",
         after_help = "Example:\n  \
 aikit inventory repo\n  \
 aikit inventory repo --json --include-ignored --max-files 500"
@@ -73,8 +72,8 @@ repo root), --max-file-bytes / --max-file-lines (truncate a file and record it),
 --max-total-bytes (omit later files once the running total is exceeded), --output <dir> \
 (override the output root), and --json (also print the manifest JSON to stdout).\n\n\
 `review generate` writes run_for_review.txt and manifest.json under the local output \
-directory (.scratch/work/outputs/aikit/reviews/<id>/ when .scratch/work/outputs/ exists, \
-otherwise .aikit/outputs/reviews/<id>/); output is local-only.",
+directory (.aikit/outputs/reviews/<id>/ by default; override with --output <dir>); output \
+is local-only.",
         after_help = "Example:\n  \
 aikit review generate --files src/main.rs README.md\n  \
 aikit review generate --files src/main.rs --max-file-bytes 200000 --json"
@@ -100,11 +99,11 @@ When to use: to capture a deterministic, hashed snapshot of repo contents for re
 compare repo state over time.\n\n\
 By default, files ignored by .gitignore are excluded; pass --include-ignored to include them \
 (the always-excluded directories above are still excluded). Output (inventory.json + \
-inventory.txt) is written under the local output directory: \
-.scratch/work/outputs/aikit/inventory/<id>/ when .scratch/work/outputs/ exists, otherwise \
-.aikit/outputs/inventory/<id>/; override the root with --output <dir>. With --json the \
-inventory is also printed to stdout as machine-readable JSON. --max-files <n> limits the \
-listing deterministically (after sorting) and records the limitation.",
+inventory.txt) is written under the local output directory \
+.aikit/outputs/inventory/<id>/ by default; override the root with --output <dir>. With \
+--json the inventory is also printed to stdout as machine-readable JSON, including a \
+`written` array of the created file paths. --max-files <n> limits the listing \
+deterministically (after sorting) and records the limitation.",
         after_help = "Examples:\n  \
 aikit inventory repo\n  \
 aikit inventory repo --json\n  \
@@ -115,7 +114,7 @@ aikit inventory repo --include-ignored --max-files 500"
 
 #[derive(Debug, Args)]
 pub struct InventoryRepoArgs {
-    /// Override the output directory root (default: .scratch/work/outputs/aikit, else .aikit/outputs).
+    /// Override the output directory root (default: .aikit/outputs; pass .scratch/... to use scratch).
     #[arg(long, value_name = "DIR")]
     pub output: Option<String>,
 
@@ -153,11 +152,10 @@ individual files (recording truncation and the bound), and --max-total-bytes omi
 files once the running total would be exceeded (recording omitted_reason/cap_hit). Every \
 requested file appears exactly once in the manifest whether included, truncated, or \
 omitted.\n\n\
-Output (run_for_review.txt + manifest.json) is written under the local output directory: \
-.scratch/work/outputs/aikit/reviews/<id>/ when .scratch/work/outputs/ exists, otherwise \
-.aikit/outputs/reviews/<id>/; override the root with --output <dir>. With --json the \
-manifest is also printed to stdout. Batch 3 supports explicit files only; --anchor and \
---changed modes are not available.",
+Output (run_for_review.txt + manifest.json) is written under the local output directory \
+.aikit/outputs/reviews/<id>/ by default; override the root with --output <dir>. With --json \
+the manifest is also printed to stdout, including a `written` array of the created file \
+paths. Batch 3 supports explicit files only; --anchor and --changed modes are not available.",
         after_help = "Examples:\n  \
 aikit review generate --files src/main.rs README.md\n  \
 aikit review generate --files src/*.rs --max-file-bytes 200000 --max-total-bytes 2000000 --json"
@@ -171,7 +169,7 @@ pub struct ReviewGenerateArgs {
     #[arg(long, value_name = "FILE", num_args = 1.., required = true)]
     pub files: Vec<String>,
 
-    /// Override the output directory root (default: .scratch/work/outputs/aikit, else .aikit/outputs).
+    /// Override the output directory root (default: .aikit/outputs; pass .scratch/... to use scratch).
     #[arg(long, value_name = "DIR")]
     pub output: Option<String>,
 
@@ -205,9 +203,9 @@ pub enum BatchCommand {
         long_about = "Create a batch anchor capturing the current Git HEAD, branch, status, \
 and timestamp. Use this immediately before starting a unit of AI-agent or manual work, so \
 `batch changed` can later report what that work touched.\n\n\
-The anchor is written as JSON under the local output directory: \
-.scratch/work/outputs/aikit/batches/ when .scratch/work/outputs/ already exists, otherwise \
-.aikit/outputs/batches/. Output is local-only and never needs committing.\n\n\
+The anchor is written as JSON under the local output directory \
+.aikit/outputs/batches/ by default; override with --output <dir>. Output is local-only and \
+never needs committing.\n\n\
 With --json, prints the anchor path and the anchor object as machine-readable JSON.",
         after_help = "Example:\n  aikit batch start\n  aikit batch start --json"
     )]
@@ -226,7 +224,7 @@ SHA-256 for each existing file.\n\n\
 Limitation: mtime is a heuristic and can miss changed-then-reverted files; treat untracked \
 results as best-effort.",
         after_help = "Example:\n  \
-aikit batch changed --anchor .scratch/work/outputs/aikit/batches/<anchor-id>.json\n  \
+aikit batch changed --anchor .aikit/outputs/batches/<anchor-id>.json\n  \
 aikit batch changed --anchor <anchor.json> --include-untracked --hash --json"
     )]
     Changed(ChangedArgs),
@@ -234,7 +232,7 @@ aikit batch changed --anchor <anchor.json> --include-untracked --hash --json"
 
 #[derive(Debug, Args)]
 pub struct StartArgs {
-    /// Override the output directory root (default: .scratch/work/outputs/aikit, else .aikit/outputs).
+    /// Override the output directory root (default: .aikit/outputs; pass .scratch/... to use scratch).
     #[arg(long, value_name = "DIR")]
     pub output: Option<String>,
 
