@@ -20,6 +20,8 @@ pub mod blocked {
     pub const UNSUPPORTED_MODE: &str = "blocked_unsupported_mode";
     pub const DIRTY_TREE: &str = "blocked_dirty_tree";
     pub const FORBIDDEN_OPERATION: &str = "blocked_forbidden_operation";
+    pub const ARTIFACT_NOT_FOUND: &str = "blocked_artifact_not_found";
+    pub const AMBIGUOUS_ARTIFACT: &str = "blocked_ambiguous_artifact";
 }
 
 #[derive(Debug, Error)]

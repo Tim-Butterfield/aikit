@@ -1327,17 +1327,35 @@ approved post-initial correction and the approved direction for further slices.
   demand) and a dirty tracked tree are reported but do not by themselves make a repo
   unready.
 
-### 22.3 Approved post-initial slices (direction only)
+### 22.3 Output command family (Slice 3 — implemented)
 
-The following remaining slices are approved direction. **Slice 1 and Slice 2 are
-implemented; Slices 3–5 are not implemented** and are recorded only so the command
-grammar stays coherent. No separate roadmap document is created — this section is the
-record.
+- The `output` command family manages local aikit output artifacts under an output root
+  (default `.aikit/outputs/`), using the noun-family / action grammar. Known artifacts are
+  `batches/*.json` files and `inventory/`, `reviews/`, and `runs/` subdirectories.
+  - `aikit output list` — list known artifacts (read-only); empty success when the output
+    root is absent; sorted by family then id; `--family`, `--root`, `--json`.
+  - `aikit output show <artifact-path-or-id>` — show one artifact (read-only): resolve by
+    path under the output root or by id across family folders; reject ambiguous ids and
+    out-of-root paths (`blocked_path_escape`); missing → `blocked_artifact_not_found`;
+    report family/id/path, contained files, and a compact metadata summary; `--root`,
+    `--json`.
+  - `aikit output clean` — safe by default: dry-run unless `--execute`, and `--execute`
+    requires a selector (`--older-than <n>h|<n>d` or `--all`). Deletes only known
+    artifacts inside the output root; never outside the root, never via symlink escapes,
+    and never `.aikit/temp/`, `.scratch/`, `.claude/`, `target/`, or `.git/`. Family
+    directories are left in place. `--older-than` and `--all` are mutually exclusive;
+    `--family`, `--root`, `--json`.
+
+### 22.4 Approved post-initial slices (direction only)
+
+The following remaining slices are approved direction. **Slices 1–3 are implemented;
+Slices 4–5 are not implemented** and are recorded only so the command grammar stays
+coherent. No separate roadmap document is created — this section is the record.
 
 - **Slice 1 (implemented):** `aikit script run`, `aikit script check`; remove
   `aikit run script`.
 - **Slice 2 (implemented):** `aikit repo init`, `aikit repo doctor`.
-- **Slice 3 (approved, not implemented):** `aikit output list`, `aikit output show`,
+- **Slice 3 (implemented):** `aikit output list`, `aikit output show`,
   `aikit output clean`.
 - **Slice 4 (approved, not implemented):** `aikit batch list`, `aikit batch show`,
   `aikit diff anchor`.

@@ -13,6 +13,9 @@ pub const KIND_SCRIPT_RUN: &str = "aikit.script_run";
 pub const KIND_SCRIPT_CHECK: &str = "aikit.script_check";
 pub const KIND_REPO_INIT: &str = "aikit.repo_init";
 pub const KIND_REPO_DOCTOR: &str = "aikit.repo_doctor";
+pub const KIND_OUTPUT_LIST: &str = "aikit.output_list";
+pub const KIND_OUTPUT_SHOW: &str = "aikit.output_show";
+pub const KIND_OUTPUT_CLEAN: &str = "aikit.output_clean";
 
 /// A point-in-time anchor written by `aikit batch start`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -236,6 +239,100 @@ pub struct ScriptCheck {
 pub struct PathStatus {
     pub path: String,
     pub exists: bool,
+}
+
+/// A known aikit output artifact (a `batches/*.json` file, or an `inventory/`,
+/// `reviews/`, or `runs/` subdirectory). Used by the `output` command family.
+#[derive(Debug, Serialize)]
+pub struct OutputArtifact {
+    /// `batches` | `inventory` | `reviews` | `runs`.
+    pub family: String,
+    /// Artifact id (filename without `.json` for batches; directory name otherwise).
+    pub artifact_id: String,
+    /// Repo-relative path of the artifact.
+    pub path: String,
+    /// `file` (a batch anchor) or `dir` (inventory/review/run directory).
+    pub artifact_type: String,
+    pub size_bytes: u64,
+    pub modified_at: String,
+}
+
+/// Per-family artifact counts for `output list`.
+#[derive(Debug, Serialize)]
+pub struct OutputCounts {
+    pub total: usize,
+    pub batches: usize,
+    pub inventory: usize,
+    pub reviews: usize,
+    pub runs: usize,
+}
+
+/// The report written by `aikit output list`.
+#[derive(Debug, Serialize)]
+pub struct OutputList {
+    pub schema_version: u32,
+    pub kind: String,
+    pub repo_root: String,
+    /// Repo-relative selected output root.
+    pub output_root: String,
+    pub generated_at: String,
+    pub artifacts: Vec<OutputArtifact>,
+    pub counts: OutputCounts,
+    pub blocked_state: Option<String>,
+}
+
+/// A file within an artifact (for `output show`).
+#[derive(Debug, Serialize)]
+pub struct OutputFile {
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+/// The report written by `aikit output show`.
+#[derive(Debug, Serialize)]
+pub struct OutputShow {
+    pub schema_version: u32,
+    pub kind: String,
+    pub repo_root: String,
+    pub output_root: String,
+    pub artifact: OutputArtifact,
+    /// Files contained in the artifact (the file itself for a batch anchor).
+    pub files: Vec<OutputFile>,
+    /// Parsed summary of the artifact's main JSON (kind/schema_version, ids), or null.
+    pub metadata: serde_json::Value,
+    pub blocked_state: Option<String>,
+}
+
+/// Filters applied by `aikit output clean`.
+#[derive(Debug, Serialize)]
+pub struct OutputCleanFilters {
+    pub family: Option<String>,
+    pub older_than: Option<String>,
+    pub all: bool,
+}
+
+/// Candidate/deleted counts for `output clean`.
+#[derive(Debug, Serialize)]
+pub struct OutputCleanCounts {
+    pub candidates: usize,
+    pub deleted: usize,
+}
+
+/// The report written by `aikit output clean`. In dry-run mode `deleted` is empty.
+#[derive(Debug, Serialize)]
+pub struct OutputClean {
+    pub schema_version: u32,
+    pub kind: String,
+    pub repo_root: String,
+    pub output_root: String,
+    pub dry_run: bool,
+    pub execute: bool,
+    pub filters: OutputCleanFilters,
+    pub candidates: Vec<OutputArtifact>,
+    /// Repo-relative paths actually deleted (only in execute mode).
+    pub deleted: Vec<String>,
+    pub counts: OutputCleanCounts,
+    pub blocked_state: Option<String>,
 }
 
 /// The report written by `aikit repo init`. `repo init` only blocks on

@@ -88,6 +88,12 @@ A typical local cycle:
 10. Report exact results: command, exit code, created output paths, and any blocked
     state.
 
+After commands generate artifacts under `.aikit/outputs/` (anchors, inventories, review
+bundles, run records), use `aikit output list` / `aikit output show` to inspect them and
+`aikit output clean` to prune them. Generated output is local-only and should not be
+committed, and cleanup is **explicit**: `output clean` is dry-run by default and deletes
+only with `--execute` plus a selector — aikit never deletes outputs automatically.
+
 ## Command Families
 
 ### `aikit repo init`
@@ -114,6 +120,24 @@ A typical local cycle:
   branch/HEAD, tracked clean/dirty, `.aikit/` `.aikit/temp/` `.aikit/outputs/`
   existence, ignore status + source, default output root, allowed script locations,
   interpreter availability, version, warnings, and an overall `ready` flag.
+
+### `aikit output list` / `aikit output show` / `aikit output clean`
+
+- **Purpose:** manage the local artifacts aikit writes under `.aikit/outputs/` (batch
+  anchors, inventories, review bundles, run records).
+- **Typical use:** inspect what local output exists (`list`/`show`) and prune it
+  explicitly when it accumulates (`clean`).
+- **Constraints:** must be run inside a Git repository, else `blocked_repo_not_found`.
+  `list` and `show` are **read-only**. `clean` is **dry-run by default** and deletes only
+  with `--execute` plus a selector (`--older-than <n>h|<n>d` or `--all`); it deletes only
+  known artifacts (`batches/*.json`, `inventory/`, `reviews/`, `runs/` subdirectories)
+  inside the selected output root, never outside it, never via symlink escapes, and never
+  `.aikit/temp/`, `.scratch/`, `.claude/`, `target/`, or `.git/`. `--family` narrows
+  scope; `--root <path>` selects a different in-repo output root.
+- **Output:** `list` → `aikit.output_list`; `show` → `aikit.output_show` (artifact
+  family/id/path, contained files, a compact metadata summary); `clean` →
+  `aikit.output_clean` (mode, filters, candidates, deleted paths). All support `--json`.
+  This is inspection/management only — no judgment about output correctness.
 
 ### `aikit batch start`
 

@@ -10,6 +10,7 @@ mod errors;
 mod formats;
 mod inventory;
 mod output;
+mod output_cmd;
 mod policy;
 mod repo;
 mod review;
@@ -18,7 +19,8 @@ mod script;
 use clap::Parser;
 
 use cli::{
-    BatchCommand, Cli, Command, InventoryCommand, RepoCommand, ReviewCommand, ScriptCommand,
+    BatchCommand, Cli, Command, InventoryCommand, OutputCommand, RepoCommand, ReviewCommand,
+    ScriptCommand,
 };
 use errors::AikitError;
 
@@ -39,6 +41,11 @@ fn run(cli: Cli) -> Result<(), AikitError> {
         },
         Command::Inventory(inv) => match inv.command {
             InventoryCommand::Repo(args) => inventory::repo(args),
+        },
+        Command::Output(out) => match out.command {
+            OutputCommand::List(args) => output_cmd::list(args),
+            OutputCommand::Show(args) => output_cmd::show(args),
+            OutputCommand::Clean(args) => output_cmd::clean(args),
         },
         Command::Review(rev) => match rev.command {
             ReviewCommand::Generate(args) => review::generate(args),

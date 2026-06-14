@@ -176,6 +176,43 @@ uses the same noun-family / action grammar as the rest of the CLI.
 - exit 0 when a repository is found, even with warnings; treat missing `.aikit/temp/` or
   ignore coverage as warnings rather than failures.
 
+### 5.7 `aikit output list` / `aikit output show` / `aikit output clean`
+
+The `output` command family is **post-initial Slice 3** (not part of the completed
+initial implementation batches). It manages local aikit output artifacts under an output
+root (default `.aikit/outputs/`), using the noun-family / action grammar. Known artifacts
+are `batches/*.json` files and `inventory/`, `reviews/`, and `runs/` subdirectories;
+arbitrary files elsewhere are not treated as aikit output artifacts.
+
+**`aikit output list` — behavior:**
+- detect the repo root (block `blocked_repo_not_found` outside a repository);
+- inspect the selected output root; if it does not exist, succeed with an empty list;
+- list known artifacts only, sorted by family then artifact id, with family, id, path,
+  type, size, and modified time;
+- read-only (create/delete nothing); support `--family`, `--root`, `--json`.
+
+**`aikit output show <artifact-path-or-id>` — behavior:**
+- detect the repo root (block `blocked_repo_not_found` outside a repository);
+- resolve the argument as a path under the output root or as an artifact id matched
+  against the known family folders; reject ambiguous ids and paths that resolve outside
+  the output root (`blocked_path_escape`); a missing artifact is `blocked_artifact_not_found`;
+- report the artifact family/id/path, the files it contains, and a compact summary of its
+  main JSON; read-only; support `--root`, `--json`. Inspection only — no correctness
+  judgment.
+
+**`aikit output clean` — behavior:**
+- safe by default: dry-run unless `--execute`, and `--execute` requires a selector
+  (`--older-than <n>h|<n>d` or `--all`); with neither selector, list candidates in dry-run
+  and delete nothing;
+- delete only known artifacts inside the selected output root; never outside the root,
+  never via symlink escapes, and never `.aikit/temp/`, `.scratch/`, `.claude/`, `target/`,
+  or `.git/`; leave family directories in place;
+- `--older-than` and `--all` are mutually exclusive; `--older-than` is parsed safely
+  (overflowing values are rejected); an explicit `--root` is restricted to
+  `.aikit/outputs/` or `.scratch/work/outputs/` so management cannot be redirected at
+  non-output directories; support `--family`, `--root`, `--json`; report mode, filters,
+  candidates, and the exact deleted paths.
+
 ## 6. Output Conventions
 
 - The default output root is always `.aikit/outputs/` under the detected repo root.

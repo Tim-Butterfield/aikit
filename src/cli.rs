@@ -4,7 +4,7 @@
 //! when and how to call each command. Each command documents its purpose, when to
 //! use it, key flags, default output behavior, JSON behavior, and an example.
 
-use clap::{ArgGroup, Args, Parser, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -59,6 +59,23 @@ aikit inventory repo\n  \
 aikit inventory repo --json --include-ignored --max-files 500"
     )]
     Inventory(InventoryCli),
+
+    /// List, show, and clean local aikit output artifacts.
+    #[command(
+        long_about = "List, show, and clean local aikit output artifacts under an output \
+root (default `.aikit/outputs/`). Only known artifacts are recognized: `batches/*.json` \
+files and `inventory/`, `reviews/`, and `runs/` subdirectories.\n\n\
+`output list` and `output show` are read-only. `output clean` is dry-run by default and \
+deletes only with `--execute` plus a selector (`--older-than` or `--all`); it never \
+deletes outside the output root, never follows symlink escapes, and never touches \
+`.aikit/temp/`, `.scratch/`, `.claude/`, `target/`, or `.git/`.",
+        after_help = "Examples:\n  \
+aikit output list\n  \
+aikit output show <artifact-path-or-id>\n  \
+aikit output clean --dry-run\n  \
+aikit output clean --all --execute"
+    )]
+    Output(OutputCli),
 
     /// Generate a bounded review bundle from explicit files or a batch anchor.
     #[command(
@@ -166,6 +183,139 @@ pub struct InventoryRepoArgs {
     /// Limit the inventory to the first N files after deterministic sorting.
     #[arg(long, value_name = "N")]
     pub max_files: Option<usize>,
+}
+
+/// A known aikit output family.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum OutputFamily {
+    Batches,
+    Inventory,
+    Reviews,
+    Runs,
+}
+
+#[derive(Debug, Args)]
+pub struct OutputCli {
+    #[command(subcommand)]
+    pub command: OutputCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OutputCommand {
+    /// List local aikit output artifacts (read-only).
+    #[command(
+        long_about = "List local aikit output artifacts under the selected output root \
+(default `.aikit/outputs/`). Read-only: creates and deletes nothing. Only known \
+artifacts are listed — `batches/*.json` files and `inventory/`, `reviews/`, and `runs/` \
+subdirectories — sorted by family then artifact id. If the output root does not exist, \
+the list is empty (success). Each row reports family, id, path, size, and modified time. \
+Supports `--family <batches|inventory|reviews|runs>`, `--root <path>`, and `--json`.",
+        after_help = "Examples:\n  \
+aikit output list\n  \
+aikit output list --family runs --json"
+    )]
+    List(OutputListArgs),
+
+    /// Show details for one local aikit output artifact (read-only).
+    #[command(
+        long_about = "Show details for one explicit local aikit output artifact \
+(read-only; creates and deletes nothing). The argument is an artifact path under the \
+output root or an artifact id; an id is matched against the known family folders \
+(batches/inventory/reviews/runs). Ambiguous ids and paths that resolve outside the \
+output root are rejected; a missing artifact is reported as a clear blocked state. \
+Reports the artifact family/id/path, the files it contains, and a compact summary of its \
+main JSON (run.json / manifest.json / inventory.json / the batch anchor). This command \
+makes no judgment about correctness. Supports `--root <path>` and `--json`.",
+        after_help = "Examples:\n  \
+aikit output show <artifact-path-or-id>\n  \
+aikit output show .aikit/outputs/runs/<id> --json"
+    )]
+    Show(OutputShowArgs),
+
+    /// Clean local aikit output artifacts (dry-run by default; --execute to delete).
+    #[command(
+        long_about = "Clean local aikit output artifacts under the selected output root. \
+SAFE BY DEFAULT: dry-run unless `--execute` is given, and `--execute` requires a selector \
+(`--older-than <duration>` or `--all`). With neither selector, all candidates are listed \
+in dry-run and nothing is deleted. Deletion removes only known artifacts \
+(`batches/*.json` files and `inventory/`/`reviews/`/`runs/` subdirectories) inside the \
+output root; it never deletes outside the root, never follows symlink escapes, and never \
+touches `.aikit/temp/`, `.scratch/`, `.claude/`, `target/`, or `.git/`.\n\n\
+`--older-than` takes a simple duration: `<n>h` (hours) or `<n>d` (days), e.g. `24h` or \
+`7d`. `--older-than` and `--all` cannot be combined. Supports `--family`, `--root`, and \
+`--json`.",
+        after_help = "Examples:\n  \
+aikit output clean --dry-run\n  \
+aikit output clean --older-than 7d --dry-run\n  \
+aikit output clean --older-than 7d --execute\n  \
+aikit output clean --all --execute"
+    )]
+    Clean(OutputCleanArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct OutputListArgs {
+    /// Only list this output family.
+    #[arg(long, value_enum)]
+    pub family: Option<OutputFamily>,
+
+    /// Output root to inspect (default: .aikit/outputs; an explicit root must be under
+    /// .aikit/outputs/ or .scratch/work/outputs/).
+    #[arg(long, value_name = "PATH")]
+    pub root: Option<String>,
+
+    /// Print the machine-readable list to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct OutputShowArgs {
+    /// Artifact to show: a path under the output root, or an artifact id.
+    #[arg(value_name = "ARTIFACT")]
+    pub artifact: String,
+
+    /// Output root to inspect (default: .aikit/outputs; an explicit root must be under
+    /// .aikit/outputs/ or .scratch/work/outputs/).
+    #[arg(long, value_name = "PATH")]
+    pub root: Option<String>,
+
+    /// Print the machine-readable details to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(group(ArgGroup::new("selector").args(["older_than", "all"])))]
+pub struct OutputCleanArgs {
+    /// Only clean this output family.
+    #[arg(long, value_enum)]
+    pub family: Option<OutputFamily>,
+
+    /// Output root to clean (default: .aikit/outputs; an explicit root must be under
+    /// .aikit/outputs/ or .scratch/work/outputs/).
+    #[arg(long, value_name = "PATH")]
+    pub root: Option<String>,
+
+    /// Show what would be deleted without deleting (this is the default).
+    #[arg(long, conflicts_with = "execute")]
+    pub dry_run: bool,
+
+    /// Actually delete the selected artifacts (requires --older-than or --all).
+    #[arg(long, requires = "selector")]
+    pub execute: bool,
+
+    /// Only clean artifacts older than this duration: <n>h (hours) or <n>d (days).
+    #[arg(long, value_name = "DURATION")]
+    pub older_than: Option<String>,
+
+    /// Select all known output artifacts (mutually exclusive with --older-than).
+    #[arg(long)]
+    pub all: bool,
+
+    /// Print the machine-readable clean report to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]

@@ -52,6 +52,9 @@
 - `aikit inventory repo`
 - `aikit repo init` (post-initial Slice 2)
 - `aikit repo doctor` (post-initial Slice 2)
+- `aikit output list` (post-initial Slice 3)
+- `aikit output show` (post-initial Slice 3)
+- `aikit output clean` (post-initial Slice 3)
 
 ## Implementation Direction
 
@@ -250,6 +253,31 @@ aikit script run .aikit/temp/build.sh --require-clean   # block if the tracked t
 - **Exit code:** an executed script's exit code is propagated; policy blocks return a
   non-zero `blocked_*` error (exit 3); invalid usage is exit 2.
 
+### Output management
+
+Manage the local artifacts aikit writes under `.aikit/outputs/` (batch anchors,
+inventories, review bundles, and run records):
+
+```sh
+aikit output list                       # list known output artifacts (read-only)
+aikit output show <artifact-path-or-id> # show one artifact's details (read-only)
+aikit output clean --dry-run            # show what would be deleted; deletes nothing
+aikit output clean --older-than 7d --execute   # delete artifacts older than 7 days
+aikit output clean --all --execute      # delete all known output artifacts
+```
+
+- `output list` and `output show` are **read-only** — they create and delete nothing.
+- `output clean` is **dry-run by default**: it deletes nothing unless you pass
+  `--execute`, and `--execute` requires a selector (`--older-than <n>h|<n>d` or `--all`).
+- Only **known** artifacts are touched (`batches/*.json` files and `inventory/`,
+  `reviews/`, `runs/` subdirectories) inside the selected output root. `clean` never
+  deletes outside the output root, never follows symlink escapes, and never touches
+  `.aikit/temp/`, `.scratch/`, `.claude/`, `target/`, or `.git/`.
+- `--family <batches|inventory|reviews|runs>` narrows the scope; `--root <path>` selects
+  a different output root (restricted to `.aikit/outputs/` or `.scratch/work/outputs/`,
+  so management can never be redirected at `.git/`, `target/`, or other non-output
+  directories); all three support `--json`.
+
 ## Install for Local Use
 
 Install the `aikit` binary so downstream repositories can call `aikit ...` directly,
@@ -311,8 +339,9 @@ This direct-binary form is for working on `aikit` itself, not for normal downstr
 Batch 1 (`batch start`, `batch changed`), Batch 2 (`inventory repo`), Batch 3 +
 Batch 4 (`review generate --files` and `review generate --anchor`), and the
 `script` family (`script run` / `script check`) commands are implemented. Post-initial
-work has added the corrected `script` command shape (Slice 1) and the `repo` family
-(`repo init` / `repo doctor`, Slice 2). The precomputed `--changed <changed.json>`
+work has added the corrected `script` command shape (Slice 1), the `repo` family
+(`repo init` / `repo doctor`, Slice 2), and the `output` family (`output list` /
+`output show` / `output clean`, Slice 3). The precomputed `--changed <changed.json>`
 review mode is not implemented (anchor mode covers the changed-since-anchor case). See
 [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
 [`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the

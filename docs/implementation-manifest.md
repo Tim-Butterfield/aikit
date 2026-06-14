@@ -872,9 +872,65 @@ writes are local Git metadata and are never staged.
 
 ### Remaining future slices (approved direction, not implemented)
 
-Slices 3–5 remain approved direction only (see implementation plan §22.3); not
-implemented in Slice 2. No separate roadmap document is created.
+Recorded as of Slice 2 (see implementation plan §22.4). (Slice 3 has since been
+implemented — see the "Post-Initial Command Shape — Slice 3" section below.) No separate
+roadmap document is created.
 
 - Slice 3: `aikit output list`, `aikit output show`, `aikit output clean`.
+- Slice 4: `aikit batch list`, `aikit batch show`, `aikit diff anchor`.
+- Slice 5: `aikit env snapshot`, `aikit scan secrets`.
+
+## Post-Initial Command Shape — Slice 3
+
+An approved post-initial slice adds the `output` command family. Recorded here (not as a
+new initial batch). Slices 1–2 and the six initial batches remain historical and complete.
+
+### Slice 3 scope (implemented)
+
+- Add the `output` command family (noun-family / action grammar) to manage local aikit
+  output artifacts under an output root (default `.aikit/outputs/`). Known artifacts:
+  `batches/*.json` files and `inventory/`, `reviews/`, `runs/` subdirectories.
+  - `aikit output list` — list known artifacts (read-only); empty success when the output
+    root is absent.
+  - `aikit output show <artifact-path-or-id>` — show one artifact (read-only); resolve by
+    path under the output root or by id; reject out-of-root paths and ambiguous ids;
+    missing → `blocked_artifact_not_found`.
+  - `aikit output clean` — dry-run by default; `--execute` requires `--older-than`/`--all`;
+    deletes only known artifacts inside the output root; never outside the root, via
+    symlink escapes, or into `.aikit/temp/`/`.scratch/`/`.claude/`/`target/`/`.git/`.
+- New format kinds: `aikit.output_list`, `aikit.output_show`, `aikit.output_clean`. New
+  blocked states: `blocked_artifact_not_found`, `blocked_ambiguous_artifact`. No new
+  runtime dependency.
+
+### Slice 3 expected committed files
+
+| Path | Classification | Purpose |
+|---|---|---|
+| `src/output_cmd.rs` | new | `output list`/`show`/`clean` command logic + discovery/safety helpers |
+| `src/cli.rs` | modified | `Output`/`OutputCommand::{List,Show,Clean}` family + args + `OutputFamily` enum |
+| `src/main.rs` | modified | module + dispatch for the output family |
+| `src/formats.rs` | modified | add `OutputArtifact`/`OutputList`/`OutputShow`/`OutputClean` (+ helpers) and three kinds |
+| `src/errors.rs` | modified | add `blocked_artifact_not_found`, `blocked_ambiguous_artifact` |
+| `tests/cli_output.rs` | new | help, list, show, clean (incl. dry-run/execute/selector/safety) |
+| `README.md` | modified | output management section + command list/current-state |
+| `docs/agent-usage.md` | modified | output commands in command families + workflow |
+| `docs/aikit-cli-spec.md` | modified | §5.7 output list/show/clean (post-initial Slice 3) |
+| `docs/aikit-implementation-plan.md` | modified | §22.3 Slice 3 implemented; §22.4 future slices |
+| `docs/implementation-manifest.md` | modified | this section |
+
+### Slice 3 expected-vs-actual
+
+To be confirmed against `git status` / `git diff` before commit: the committed set should
+match the table above. `src/output.rs` is expected to be **unchanged** (existing
+output-root helpers reused; the command logic lives in the new `src/output_cmd.rs`).
+`tests/cli_integration.rs` is expected to be **unchanged** (the existing end-to-end test
+needs no output-management step). `Cargo.toml` / `Cargo.lock` are expected to be unchanged
+(no new dependency). No ignored/local-only files are staged.
+
+### Remaining future slices (approved direction, not implemented)
+
+Slices 4–5 remain approved direction only (see implementation plan §22.4); not
+implemented in Slice 3. No separate roadmap document is created.
+
 - Slice 4: `aikit batch list`, `aikit batch show`, `aikit diff anchor`.
 - Slice 5: `aikit env snapshot`, `aikit scan secrets`.
