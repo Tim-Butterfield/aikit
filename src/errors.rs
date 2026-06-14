@@ -23,6 +23,7 @@ pub mod blocked {
     pub const ARTIFACT_NOT_FOUND: &str = "blocked_artifact_not_found";
     pub const AMBIGUOUS_ARTIFACT: &str = "blocked_ambiguous_artifact";
     pub const MISSING_BASE_COMMIT: &str = "blocked_missing_base_commit";
+    pub const SECRET_FINDINGS: &str = "blocked_secret_findings";
 }
 
 #[derive(Debug, Error)]

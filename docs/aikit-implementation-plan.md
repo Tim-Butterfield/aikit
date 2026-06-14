@@ -1364,11 +1364,34 @@ approved post-initial correction and the approved direction for further slices.
     file contents are not included. Creates no review bundle/output artifact; `--stat`
     (default), `--patch`, `--json`.
 
-### 22.5 Approved post-initial slices (direction only)
+### 22.5 Environment snapshot + secret scan (Slice 5 — implemented)
 
-The following remaining slice is approved direction. **Slices 1–4 are implemented;
-Slice 5 is not implemented** and is recorded only so the command grammar stays coherent.
-No separate roadmap document is created — this section is the record.
+- Add an `env` family and a `scan` family — mechanical, local commands that call no AI
+  providers, touch no remotes, make no semantic governance decisions, and create no durable
+  output artifacts by default (stdout plus `--json`):
+  - `aikit env snapshot` — a bounded, read-only local environment report. Reports the aikit
+    version, current executable, OS family, CPU architecture, working directory, repo facts
+    when inside a Git repo (root, branch, HEAD, tracked clean/dirty, default output root,
+    `.aikit/` `.aikit/temp/` `.aikit/outputs/` existence, `.aikit/` ignore status), interpreter
+    availability (`/bin/sh`, `/bin/zsh`), local git/Rust/Cargo versions, and `$SHELL`. Works
+    outside a repo too (repo facts `null` + warning). Creates nothing, runs no network
+    commands. Deliberately does NOT dump all environment variables, the raw `PATH`, tokens,
+    credentials, or keys; `PATH` is summarized only (entry count + on-PATH boolean). `--json`.
+  - `aikit scan secrets <path>...` — a best-effort heuristic secret scan over explicit
+    repo-local paths. Blocks outside a repo (`blocked_repo_not_found`); requires ≥1 explicit
+    path; resolves paths relative to the repo root; rejects out-of-repo and symlink/path
+    escapes (`blocked_path_escape`); always excludes `.git/`. Scans explicit files even when
+    ignored; directory traversal respects `.gitignore` by default (`--include-ignored`); skips
+    binary files and files over `--max-file-bytes` (default 1 MiB). Heuristic rule set
+    (private-key markers, credential-style assignments, long token-like values, generic
+    access-key ids). NEVER prints raw secret values (human or JSON). Default exit 0;
+    `--fail-on-findings` exits 3 with `blocked_secret_findings`. Creates no artifacts. `--json`.
+- A `regex` dependency is added (it materially simplifies the secret rule set).
+
+### 22.6 Approved post-initial slices (all implemented)
+
+The approved five-slice post-initial command expansion is **complete**. **Slices 1–5 are all
+implemented.** No separate roadmap document is created — this section is the record.
 
 - **Slice 1 (implemented):** `aikit script run`, `aikit script check`; remove
   `aikit run script`.
@@ -1376,8 +1399,9 @@ No separate roadmap document is created — this section is the record.
 - **Slice 3 (implemented):** `aikit output list`, `aikit output show`,
   `aikit output clean`.
 - **Slice 4 (implemented):** `aikit batch list`, `aikit batch show`, `aikit diff anchor`.
-- **Slice 5 (approved, not implemented):** `aikit env snapshot`, `aikit scan secrets`.
+- **Slice 5 (implemented):** `aikit env snapshot`, `aikit scan secrets`.
 
-These follow the same noun-family / action grammar. Each future slice will be implemented
-only under its own explicitly approved task, with the same checks / review / manifest
-discipline used for the initial batches.
+These follow the same noun-family / action grammar. There are no remaining approved
+post-initial command slices; any further command work would require a new explicitly
+approved task, with the same checks / review / manifest discipline used for the initial
+batches and these slices.

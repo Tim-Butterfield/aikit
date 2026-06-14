@@ -54,7 +54,8 @@ help is the authoritative per-command reference.
 - `3` — a named **blocked state** (a mechanical precondition was not met, e.g.
   `blocked_repo_not_found`, `blocked_missing_anchor`, `blocked_invalid_anchor`,
   `blocked_path_escape`, `blocked_script_not_allowed`, `blocked_dirty_tree`,
-  `blocked_unsupported_mode`, `blocked_forbidden_operation`, `blocked_unreadable_file`).
+  `blocked_unsupported_mode`, `blocked_forbidden_operation`, `blocked_unreadable_file`,
+  `blocked_secret_findings`).
 
 A blocked state is a deliberate, named refusal — agents must surface it, not ignore it.
 
@@ -175,6 +176,47 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
   bundle or output artifact, advances no workflow state, and never touches remotes.
 - **Output:** `aikit.diff_anchor` (anchor metadata, base/current head, name-status files,
   counts, stat, notes). `--stat` (default), `--patch`, and `--json` supported.
+
+### `aikit env snapshot`
+
+- **Purpose:** capture mechanical local environment facts useful for debugging aikit
+  usage.
+- **Typical use:** a debugging/reporting aid — record the local toolchain and repo state
+  when diagnosing an aikit problem or describing an environment.
+- **Constraints:** **read-only** — creates no files or directories, modifies no repo
+  files, runs no network commands, and never touches remotes. Works inside or outside a
+  Git repository (outside a repo, repo facts are `null` and a warning is recorded). It
+  deliberately **does not dump all environment variables**, the raw `PATH`, tokens,
+  credentials, or keys; `PATH` is summarized only (entry count plus an on-PATH boolean).
+- **Output:** `aikit.env_snapshot` (version, current exe, OS/arch, working directory,
+  repo facts, interpreter availability, local git/Rust/Cargo versions, `$SHELL`,
+  warnings). Supports `--json`.
+
+### `aikit scan secrets <path>...`
+
+- **Purpose:** run a local, best-effort heuristic scan for likely secrets in explicit
+  repo-local paths.
+- **Typical use:** a **pre-share / pre-review** best-effort check — sweep files before
+  bundling them for review or handing them off, to catch obvious committed secrets.
+- **Constraints:** must be inside a Git repository, else `blocked_repo_not_found`. At
+  least one explicit path is required; the whole repo is never scanned implicitly unless
+  the path is the repo root or `.`. Paths are resolved relative to the repo root; paths
+  outside the repo and symlink/path escapes are rejected (`blocked_path_escape`), and
+  `.git/` is always excluded. Explicit files are scanned even when ignored; directory
+  traversal respects `.gitignore` by default (`--include-ignored` to include ignored
+  files). Binary files and files over `--max-file-bytes` (default 1 MiB) are skipped.
+- **Results are heuristic and must be surfaced, not treated as proof.** The scanner can
+  false-positive and false-negative; a finding is **not** proof of a live credential, and
+  **no findings does not prove a file is safe to share**. It does not replace dedicated
+  secret-scanning tools. Agents must surface findings (and the heuristic caveat) for human
+  inspection rather than acting on them as a verdict.
+- **Privacy:** raw secret values are **never** printed in human or JSON output — each
+  finding carries only path, line, rule id, description, severity, and `redacted: true`.
+- **Exit behavior:** by default findings are reported and the command exits 0 (usable for
+  inspection). With `--fail-on-findings`, a non-empty finding set exits 3
+  (`blocked_secret_findings`). Creates no output artifacts.
+- **Output:** `aikit.scan_secrets` (inputs, counts, findings, skipped files). Supports
+  `--json`.
 
 ### `aikit batch changed --anchor <anchor.json>`
 
@@ -495,6 +537,13 @@ aikit script run .aikit/temp/task.sh --print
 
 # Run a script and record the audit trail under an explicit output location.
 aikit script run .aikit/temp/task.sh --output .scratch/work/outputs/aikit
+
+# Report local environment facts (read-only; no full env dump).
+aikit env snapshot --json
+
+# Best-effort secret scan over explicit paths (raw values never printed).
+aikit scan secrets README.md docs --json
+aikit scan secrets . --fail-on-findings
 
 # Permission-consolidated: run many local checks via one top-level invocation
 # (the repeated commands live inside the script).

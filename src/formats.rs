@@ -19,6 +19,8 @@ pub const KIND_OUTPUT_CLEAN: &str = "aikit.output_clean";
 pub const KIND_BATCH_LIST: &str = "aikit.batch_list";
 pub const KIND_BATCH_SHOW: &str = "aikit.batch_show";
 pub const KIND_DIFF_ANCHOR: &str = "aikit.diff_anchor";
+pub const KIND_ENV_SNAPSHOT: &str = "aikit.env_snapshot";
+pub const KIND_SCAN_SECRETS: &str = "aikit.scan_secrets";
 
 /// A point-in-time anchor written by `aikit batch start`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -435,6 +437,124 @@ pub struct DiffAnchor {
     /// Full patch text; present only when `--patch` was given.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub patch: Option<String>,
+    pub blocked_state: Option<String>,
+}
+
+/// The repo-scoped facts in an `aikit env snapshot` (present only inside a Git repo).
+#[derive(Debug, Serialize)]
+pub struct EnvRepo {
+    pub root: String,
+    pub branch: String,
+    pub head: String,
+    pub tracked_tree_clean: bool,
+    /// Repo-relative default output root (`.aikit/outputs`).
+    pub default_output_root: String,
+    pub aikit_dir_exists: bool,
+    pub temp_dir_exists: bool,
+    pub outputs_dir_exists: bool,
+    pub aikit_ignored: bool,
+}
+
+/// A safe PATH summary for `env snapshot`. The raw PATH value is never emitted.
+#[derive(Debug, Serialize)]
+pub struct EnvPaths {
+    /// Whether the current executable's directory appears on PATH (`null` when the
+    /// current executable or PATH could not be determined).
+    pub current_exe_dir_on_path: Option<bool>,
+    /// Number of entries in PATH (a count only — never the entries themselves).
+    pub path_entry_count: usize,
+}
+
+/// Local tool versions for `env snapshot` (each `null` when the tool is unavailable).
+/// These are obtained from local `--version` invocations; no network calls are made.
+#[derive(Debug, Serialize)]
+pub struct EnvTools {
+    pub git_version: Option<String>,
+    pub rustc_version: Option<String>,
+    pub cargo_version: Option<String>,
+}
+
+/// The mechanical local environment report written by `aikit env snapshot`.
+///
+/// Deliberately bounded: it reports a fixed set of debugging facts and never dumps the
+/// full environment, the raw PATH, tokens, credentials, keys, or any network-derived or
+/// provider-specific information.
+#[derive(Debug, Serialize)]
+pub struct EnvSnapshot {
+    pub schema_version: u32,
+    pub kind: String,
+    pub generated_at: String,
+    pub version: String,
+    pub current_exe: Option<String>,
+    /// OS family (e.g. `macos`, `linux`, `windows`) — `std::env::consts::OS`.
+    pub os: String,
+    /// CPU architecture (e.g. `aarch64`, `x86_64`) — `std::env::consts::ARCH`.
+    pub arch: String,
+    pub current_dir: String,
+    /// Repo-scoped facts, or `null` when not inside a Git repository.
+    pub repo: Option<EnvRepo>,
+    pub paths: EnvPaths,
+    pub interpreters: Vec<PathStatus>,
+    pub tools: EnvTools,
+    /// The shell from `$SHELL`, when set (a single value — never the whole environment).
+    pub shell: Option<String>,
+    pub warnings: Vec<String>,
+    pub blocked_state: Option<String>,
+}
+
+/// One likely-secret finding from `aikit scan secrets`. The raw matched value is NEVER
+/// included — `redacted` is always true.
+#[derive(Debug, Serialize)]
+pub struct ScanFinding {
+    /// Repo-relative path of the file containing the match.
+    pub path: String,
+    /// 1-based line number of the match.
+    pub line: usize,
+    pub rule_id: String,
+    pub description: String,
+    /// `high` | `medium` | `low`.
+    pub severity: String,
+    /// Always true — raw secret values are never emitted.
+    pub redacted: bool,
+}
+
+/// A file skipped by `aikit scan secrets`, with the reason (`binary`, `too_large`,
+/// `unreadable`).
+#[derive(Debug, Serialize)]
+pub struct ScanSkipped {
+    pub path: String,
+    pub reason: String,
+}
+
+/// Finding/file counts for `aikit scan secrets`.
+#[derive(Debug, Serialize)]
+pub struct ScanCounts {
+    pub findings: usize,
+    pub high: usize,
+    pub medium: usize,
+    pub low: usize,
+    pub files_scanned: usize,
+    pub files_skipped: usize,
+}
+
+/// The report written by `aikit scan secrets`. Best-effort and heuristic: it can
+/// false-positive and false-negative, never proves a file is safe to share, and never
+/// includes raw secret values.
+#[derive(Debug, Serialize)]
+pub struct ScanSecrets {
+    pub schema_version: u32,
+    pub kind: String,
+    pub repo_root: String,
+    pub generated_at: String,
+    /// The explicit input paths as supplied on the command line.
+    pub inputs: Vec<String>,
+    pub include_ignored: bool,
+    pub max_file_bytes: u64,
+    pub files_scanned: usize,
+    pub files_skipped: Vec<ScanSkipped>,
+    pub findings: Vec<ScanFinding>,
+    pub counts: ScanCounts,
+    pub fail_on_findings: bool,
     pub blocked_state: Option<String>,
 }
 

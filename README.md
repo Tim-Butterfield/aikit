@@ -58,6 +58,8 @@
 - `aikit batch list` (post-initial Slice 4)
 - `aikit batch show` (post-initial Slice 4)
 - `aikit diff anchor` (post-initial Slice 4)
+- `aikit env snapshot` (post-initial Slice 5)
+- `aikit scan secrets` (post-initial Slice 5)
 
 ## Implementation Direction
 
@@ -302,6 +304,54 @@ aikit diff anchor <anchor-path-or-id> # diff the anchor's head vs the current tr
   mechanical inspection only: it creates no review bundle or output artifact and never
   touches remotes. `--stat` (included by default), `--patch`, and `--json` are supported.
 
+### Environment snapshot
+
+Capture a bounded, mechanical report of local environment facts useful for debugging
+aikit usage:
+
+```sh
+aikit env snapshot          # human-readable report
+aikit env snapshot --json   # machine-readable report
+```
+
+- **Read-only**: it creates no files or directories, modifies no repo files, runs no
+  network commands, and never touches remotes. It works inside or outside a Git
+  repository (outside a repo, the repo facts are reported as `null`).
+- Reports the aikit version, current executable, OS family, CPU architecture, working
+  directory, repo facts (root, branch, HEAD, tracked clean/dirty, default output root,
+  `.aikit/` existence and ignore status), interpreter availability (`/bin/sh`,
+  `/bin/zsh`), local git/Rust/Cargo versions, and the shell from `$SHELL`.
+- It deliberately **does not dump all environment variables**, the raw `PATH`, tokens,
+  credentials, private keys, or any provider/model-specific or network-derived
+  information. `PATH` is summarized only (an entry count plus whether the current
+  executable's directory is on it).
+
+### Secret scan
+
+Run a local, best-effort heuristic scan for likely secrets in **explicit** repo-local
+paths (the whole repo is never scanned implicitly unless you pass the repo root or `.`):
+
+```sh
+aikit scan secrets README.md docs      # scan explicit files/directories
+aikit scan secrets . --fail-on-findings  # scan the repo; exit 3 if anything is found
+aikit scan secrets src --json --include-ignored
+```
+
+- **Best-effort and heuristic.** It can false-positive and false-negative, **does not
+  prove a credential is live**, and **absence of findings does not prove a file or repo
+  is safe to share**. It does not replace dedicated secret-scanning tools — inspect every
+  finding yourself.
+- It **never prints raw secret values** in human or JSON output. Each finding reports the
+  file path, line number, rule id, description, and severity only (`redacted: true`).
+- At least one path is required. Paths are resolved relative to the repo root; paths
+  outside the repo and symlink/path escapes are rejected, and `.git/` is always excluded.
+  Explicit files are scanned even when ignored; for directories, traversal respects
+  `.gitignore` by default (use `--include-ignored` to include ignored files). Binary
+  files and files larger than `--max-file-bytes` (default 1 MiB) are skipped.
+- By default findings are reported and the command **exits 0** (usable for inspection).
+  With `--fail-on-findings`, a non-empty finding set exits 3 (`blocked_secret_findings`).
+  It creates no output artifacts and never touches remotes.
+
 ## Install for Local Use
 
 Install the `aikit` binary so downstream repositories can call `aikit ...` directly,
@@ -365,10 +415,11 @@ Batch 4 (`review generate --files` and `review generate --anchor`), and the
 `script` family (`script run` / `script check`) commands are implemented. Post-initial
 work has added the corrected `script` command shape (Slice 1), the `repo` family
 (`repo init` / `repo doctor`, Slice 2), the `output` family (`output list` /
-`output show` / `output clean`, Slice 3), and batch inspection + anchor diff
-(`batch list` / `batch show` / `diff anchor`, Slice 4). The precomputed
-`--changed <changed.json>` review mode is not implemented (anchor mode covers the
-changed-since-anchor case). See
+`output show` / `output clean`, Slice 3), batch inspection + anchor diff
+(`batch list` / `batch show` / `diff anchor`, Slice 4), and the `env`/`scan` families
+(`env snapshot` / `scan secrets`, Slice 5). This completes the approved five-slice
+post-initial command expansion. The precomputed `--changed <changed.json>` review mode
+is not implemented (anchor mode covers the changed-since-anchor case). See
 [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
 [`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
 implementation plan,

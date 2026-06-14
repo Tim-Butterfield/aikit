@@ -991,9 +991,90 @@ is expected to be **unchanged** (the existing end-to-end test needs no batch-ins
 step). `Cargo.toml` / `Cargo.lock` are expected to be unchanged (no new dependency). No
 ignored/local-only files are staged.
 
-### Remaining future slice (approved direction, not implemented)
+### Remaining future slice (approved direction)
 
-Slice 5 remains approved direction only (see implementation plan §22.5); not implemented
-in Slice 4. No separate roadmap document is created.
+Recorded as of Slice 4. (Slice 5 has since been implemented — see the "Post-Initial
+Command Shape — Slice 5" section below.) No separate roadmap document is created.
 
 - Slice 5: `aikit env snapshot`, `aikit scan secrets`.
+
+## Post-Initial Command Shape — Slice 5
+
+The final approved post-initial slice adds an `env` family and a `scan` family. Recorded
+here (not as a new initial batch). Slices 1–4 and the six initial batches remain historical
+and complete. **This slice completes the approved five-slice post-initial command
+expansion.**
+
+### Slice 5 scope (implemented)
+
+- `aikit env snapshot` — a bounded, read-only local environment report: aikit version,
+  current executable, OS family, CPU architecture, working directory, repo facts when inside
+  a Git repo (root, branch, HEAD, tracked clean/dirty, default output root, `.aikit/`
+  `.aikit/temp/` `.aikit/outputs/` existence, `.aikit/` ignore status), interpreter
+  availability (`/bin/sh`, `/bin/zsh`), local git/Rust/Cargo versions, and `$SHELL`. Works
+  outside a repo (repo facts `null` + warning). Creates nothing; runs no network commands.
+  Does NOT dump all environment variables, the raw `PATH`, tokens, credentials, or keys;
+  `PATH` is summarized only (entry count + on-PATH boolean). `--json`.
+- `aikit scan secrets <path>...` — best-effort heuristic secret scan over explicit
+  repo-local paths. Blocks outside a repo (`blocked_repo_not_found`); requires ≥1 explicit
+  path; resolves paths relative to the repo root; rejects out-of-repo and symlink/path
+  escapes (`blocked_path_escape`); always excludes `.git/`. Scans explicit files even when
+  ignored; directory traversal respects `.gitignore` by default (`--include-ignored`); skips
+  binary files and files over `--max-file-bytes` (default 1 MiB). Heuristic rules
+  (private-key markers, credential-style assignments, long token-like values, generic
+  access-key ids). NEVER prints raw secret values (human or JSON); findings carry path, line,
+  rule id, description, severity, `redacted: true`. Default exit 0; `--fail-on-findings`
+  exits 3 with `blocked_secret_findings`. Creates no artifacts. `--json`.
+- New format kinds: `aikit.env_snapshot`, `aikit.scan_secrets`. New blocked state:
+  `blocked_secret_findings`. New runtime dependency: `regex` (materially simplifies the
+  secret rule set).
+
+### Slice 5 expected committed files
+
+| Path | Classification | Purpose |
+|---|---|---|
+| `Cargo.toml` | modified | add the `regex` dependency |
+| `Cargo.lock` | modified | lock `regex` (and its transitive deps already present via `ignore`) |
+| `src/env.rs` | new | `env snapshot` command (mechanical environment report) |
+| `src/scan.rs` | new | `scan secrets` command (heuristic scan + rules) |
+| `src/cli.rs` | modified | new `Env`/`Scan` families and their args |
+| `src/main.rs` | modified | module declarations + dispatch for env/scan |
+| `src/formats.rs` | modified | add `EnvSnapshot`/`ScanSecrets` (+ nested structs) and two kinds |
+| `src/errors.rs` | modified | add `blocked_secret_findings` |
+| `src/repo.rs` | modified | add `detect_root_opt` (non-blocking repo detection for `env snapshot`); harden the porcelain status probes with `--no-optional-locks` so the dirty check never rewrites `.git/index` (review remediation) |
+| `tests/cli_env.rs` | new | `env snapshot` tests |
+| `tests/cli_scan.rs` | new | `scan secrets` tests |
+| `README.md` | modified | env snapshot + secret scan sections + command list/current-state |
+| `docs/agent-usage.md` | modified | new commands in command families + examples + exit-code |
+| `docs/aikit-cli-spec.md` | modified | §5.9 env snapshot / scan secrets (post-initial Slice 5) |
+| `docs/aikit-implementation-plan.md` | modified | §22.5 Slice 5 implemented; §22.6 expansion complete |
+| `docs/implementation-manifest.md` | modified | this section |
+
+### Slice 5 expected-vs-actual
+
+To be confirmed against `git status` / `git diff` before commit. **Justified deviation from
+the task's likely-file list:** `src/repo.rs` is modified for two reasons: (1) adds
+`detect_root_opt`, a non-blocking repo-detection helper so `env snapshot` can report
+non-repo facts outside a Git repo; (2) cross-AI-review remediation — the porcelain status
+probes (`git_status_porcelain` / `git_status_changed`) gained `--no-optional-locks` so the
+dirty-tree probe used by `env snapshot` (and `repo doctor` / `diff anchor`) never rewrites
+`.git/index`, making the read-only guarantee strictly true. `Cargo.toml` / `Cargo.lock` are
+modified (the justified `regex` dependency). `tests/cli_integration.rs` is expected to be
+**unchanged** (the existing end-to-end test needs no env/scan step). No ignored/local-only
+files are staged.
+
+**Cross-AI review (report mode) outcome.** Iterating reviewer (codex gpt-5.5, deep) +
+cross-check (gemini-3.1-pro-preview, deep); both model identities verified, no Class E, no
+halt. Gemini approved with four `pass` confirmations (type-level no-secret-leak guarantee,
+PATH summarization, path/symlink-escape blocking, binary/UTF-8 sniff). Codex raised two
+valid findings, both remediated before commit: (1) `env snapshot` dirty probe could rewrite
+`.git/index` → fixed via `--no-optional-locks` (test `env_snapshot_does_not_write_git_index`);
+(2) nested `.git/` explicit files were scannable → `is_under_git` made component-based (test
+`scan_secrets_excludes_nested_git_explicit_file`). Run dir under
+`.scratch/work/outputs/plan-review/slice5-review/` (local-only).
+
+### Approved post-initial command expansion — complete
+
+Slices 1–5 are all implemented. There are no remaining approved post-initial command
+slices; any further command work requires a new explicitly approved task. No separate
+roadmap document is created.

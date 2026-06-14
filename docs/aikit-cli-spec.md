@@ -245,6 +245,48 @@ advance workflow state, perform semantic review, create review bundles, or touch
 - create no review bundle or output artifact; never touch remotes; support `--stat`
   (included by default), `--patch`, and `--json`.
 
+### 5.9 `aikit env snapshot` / `aikit scan secrets`
+
+These commands are **post-initial Slice 5** (not part of the completed initial batches),
+the final slice of the approved five-slice post-initial command expansion. `env snapshot`
+is a new `env` family; `scan secrets` is a new `scan` family. Neither calls AI providers,
+touches remotes, makes semantic governance decisions, or creates durable output artifacts
+by default; both prefer stdout plus `--json`.
+
+**`aikit env snapshot` — behavior:**
+- report a bounded, mechanical set of local environment facts for debugging aikit usage;
+- read-only: create no files or directories, modify no repo files (including
+  `.git/info/exclude`), run no network commands, and never touch remotes;
+- detect the Git repo when inside one and report repo facts (root, branch, HEAD, tracked
+  clean/dirty, default output root, `.aikit/` `.aikit/temp/` `.aikit/outputs/` existence,
+  `.aikit/` ignore status); when outside a repo, still report the non-repo facts and record
+  a warning (repo facts `null`);
+- also report the aikit version, current executable, OS family, CPU architecture, working
+  directory, interpreter availability (`/bin/sh`, `/bin/zsh`), local git/Rust/Cargo
+  versions, and the shell from `$SHELL`;
+- **do not** dump all environment variables, the raw `PATH`, tokens, credentials, private
+  keys, SSH-agent/cloud credentials, or any provider/model-specific or network-derived
+  information; `PATH` is summarized only (entry count plus an on-PATH boolean);
+- support human output and `--json` (`kind: aikit.env_snapshot`).
+
+**`aikit scan secrets <path>...` — behavior:**
+- detect the repo root (block `blocked_repo_not_found` outside a repository);
+- require at least one explicit path (the whole repo is never scanned implicitly unless a
+  path is the repo root or `.`); resolve paths relative to the repo root; reject paths
+  outside the repo and symlink/path escapes (`blocked_path_escape`); always exclude `.git/`;
+- scan explicit files even when ignored; for directories, traverse deterministically and
+  respect `.gitignore` by default (`--include-ignored` includes ignored files); skip binary
+  files and files larger than `--max-file-bytes` (default 1 MiB);
+- run a best-effort heuristic rule set for obvious likely secrets (private-key block
+  markers, credential-style assignments, long token-like values, generic access-key
+  identifiers); the scan is heuristic only — it can false-positive/false-negative, never
+  proves a file or repo is safe to share, and does not judge whether a finding is live;
+- **never** print raw matched secret values (human or JSON); each finding reports path,
+  line, rule id, description, severity, and `redacted: true`; create no output artifacts;
+- by default report findings and exit 0; with `--fail-on-findings`, exit 3 with
+  `blocked_secret_findings` when findings are present;
+- support human output and `--json` (`kind: aikit.scan_secrets`).
+
 ## 6. Output Conventions
 
 - The default output root is always `.aikit/outputs/` under the detected repo root.
@@ -273,7 +315,9 @@ Blocked states are explicit, named, mechanical conditions. Examples:
 - `blocked_missing_anchor`;
 - `blocked_invalid_anchor`;
 - `blocked_unreadable_file`;
-- `blocked_unsupported_mode`.
+- `blocked_unsupported_mode`;
+- `blocked_missing_base_commit`;
+- `blocked_secret_findings`.
 
 ## 8. Historical Sources and Patterns
 

@@ -19,6 +19,7 @@ dependencies = [
  "clap",
  "ignore",
  "predicates",
+ "regex",
  "serde",
  "serde_json",
  "sha2",

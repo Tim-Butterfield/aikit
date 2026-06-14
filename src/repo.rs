@@ -41,6 +41,13 @@ pub fn detect_root() -> Result<PathBuf, AikitError> {
     Ok(PathBuf::from(root))
 }
 
+/// Detect the repository root, returning `None` (rather than a blocked error) when the
+/// current directory is not inside a Git repository. Used by `env snapshot`, which still
+/// reports non-repo facts when run outside a repo.
+pub fn detect_root_opt() -> Option<PathBuf> {
+    detect_root().ok()
+}
+
 /// Current HEAD commit hash, or an empty string on an unborn branch (no commits).
 pub fn git_head(root: &Path) -> String {
     run_git(root, &["rev-parse", "HEAD"]).unwrap_or_default()
@@ -55,7 +62,10 @@ pub fn git_branch(root: &Path) -> String {
 /// newline trimmed but internal lines preserved verbatim. Used for the anchor
 /// snapshot recorded by `batch start`.
 pub fn git_status_porcelain(root: &Path) -> String {
-    run_git_raw(root, &["status", "--porcelain=v1"]).unwrap_or_default()
+    // `--no-optional-locks` keeps this probe strictly read-only: a plain `git status`
+    // may refresh and rewrite `.git/index` (a stat-cache optimization), which would
+    // violate the read-only guarantee of callers like `env snapshot` / `repo doctor`.
+    run_git_raw(root, &["--no-optional-locks", "status", "--porcelain=v1"]).unwrap_or_default()
 }
 
 /// `git status --porcelain=v1 -z --untracked-files=all` — used for change detection.
@@ -70,7 +80,13 @@ pub fn git_status_porcelain(root: &Path) -> String {
 pub fn git_status_changed(root: &Path) -> String {
     run_git_raw(
         root,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        ],
     )
     .unwrap_or_default()
 }

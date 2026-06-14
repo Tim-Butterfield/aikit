@@ -54,6 +54,42 @@ aikit diff anchor <anchor-id> --json"
     )]
     Diff(DiffCli),
 
+    /// Report mechanical local environment facts (for debugging aikit usage).
+    #[command(
+        long_about = "Report mechanical local environment facts useful for debugging aikit \
+usage. `env snapshot` prints a bounded, fixed set of facts — aikit version, current \
+executable, OS family, CPU architecture, working directory, repo facts when inside a Git \
+repository, supported interpreter availability, and local git/Rust/Cargo versions.\n\n\
+It is read-only: it creates no files or directories, modifies no repo files, touches no \
+remotes, and runs no network commands. It deliberately does NOT dump all environment \
+variables, the raw PATH, tokens, credentials, keys, or any provider/model-specific or \
+network-derived information; PATH is summarized only (entry count and whether the current \
+executable's directory is on it). Supports human output and `--json`.",
+        after_help = "Examples:\n  \
+aikit env snapshot\n  \
+aikit env snapshot --json"
+    )]
+    Env(EnvCli),
+
+    /// Best-effort local heuristic scan for likely secrets in explicit paths.
+    #[command(
+        long_about = "Run a local, best-effort heuristic scan for likely secrets in \
+explicit repo-local paths. You must pass at least one path; the whole repository is never \
+scanned implicitly unless you pass the repo root or `.`.\n\n\
+Scanning is heuristic: it can false-positive and false-negative, does not prove a file or \
+repo is safe to share, does not judge whether a finding is a live credential, and does not \
+replace dedicated secret-scanning tools. It NEVER prints raw secret values in human or \
+JSON output — only the file path, line number, rule id, description, and severity. It \
+creates no output artifacts by default and never touches remotes. By default findings are reported \
+and the command still exits 0; `--fail-on-findings` exits 3 (blocked_secret_findings) when \
+findings are present.",
+        after_help = "Examples:\n  \
+aikit scan secrets README.md docs\n  \
+aikit scan secrets . --fail-on-findings\n  \
+aikit scan secrets src --json --include-ignored"
+    )]
+    Scan(ScanCli),
+
     /// Generate a mechanical inventory of repository files.
     #[command(
         long_about = "Generate a mechanical inventory of repository files: a deterministic, \
@@ -722,6 +758,102 @@ aikit diff anchor <anchor-id> --json\n  \
 aikit diff anchor .aikit/outputs/batches/<anchor-id>.json --patch"
     )]
     Anchor(DiffAnchorArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct EnvCli {
+    #[command(subcommand)]
+    pub command: EnvCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EnvCommand {
+    /// Capture mechanical local environment facts (read-only; creates nothing).
+    #[command(
+        long_about = "Capture mechanical local environment facts useful for debugging \
+aikit usage. Read-only: creates no files or directories, modifies no repo files, runs no \
+network commands, and never touches remotes.\n\n\
+Reports the aikit version, current executable path, OS family, CPU architecture, current \
+working directory, and — when inside a Git repository — the repo root, branch, HEAD, \
+tracked-tree clean/dirty state, default output root, and whether `.aikit/`, `.aikit/temp/`, \
+and `.aikit/outputs/` exist and `.aikit/` is ignored. Also reports supported interpreter \
+availability (`/bin/sh`, `/bin/zsh`), local git/Rust/Cargo versions, and the shell from \
+`$SHELL` when set.\n\n\
+It deliberately does NOT dump all environment variables, the raw PATH, tokens, \
+credentials, private keys, or any provider/model-specific or network-derived information. \
+PATH is summarized only (entry count and whether the current executable's directory is on \
+it). It works outside a Git repository too, reporting the non-repo facts. Supports human \
+output and `--json`.",
+        after_help = "Examples:\n  \
+aikit env snapshot\n  \
+aikit env snapshot --json"
+    )]
+    Snapshot(EnvSnapshotArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct EnvSnapshotArgs {
+    /// Print the machine-readable snapshot to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ScanCli {
+    #[command(subcommand)]
+    pub command: ScanCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ScanCommand {
+    /// Best-effort heuristic scan for likely secrets in explicit repo-local paths.
+    #[command(
+        long_about = "Run a local, best-effort heuristic scan for likely secrets in the \
+explicit paths you provide. At least one path is required; the whole repository is never \
+scanned implicitly unless you pass the repo root or `.`. Paths are resolved relative to \
+the repo root; paths outside the repo and symlink/path escapes are rejected, and `.git/` \
+is always excluded.\n\n\
+Explicit files are scanned even when ignored; for directories, traversal respects \
+`.gitignore` by default (use `--include-ignored` to include ignored files). Binary files \
+and files larger than `--max-file-bytes` (default 1 MiB) are skipped.\n\n\
+This is HEURISTIC and best-effort: it can false-positive and false-negative, never proves \
+a file or repo is safe to share, makes no judgment about whether a finding is a live \
+credential, and does not replace dedicated secret-scanning tools — inspect every finding. \
+It NEVER prints raw secret values in human or JSON output; each finding reports the \
+path, line, rule id, description, and severity only. It creates no output artifacts and \
+never touches remotes.\n\n\
+By default findings are reported and the command exits 0 (usable for inspection). With \
+`--fail-on-findings`, a non-empty finding set exits 3 with blocked state \
+`blocked_secret_findings`.",
+        after_help = "Examples:\n  \
+aikit scan secrets README.md docs\n  \
+aikit scan secrets . --fail-on-findings\n  \
+aikit scan secrets src --json --include-ignored --max-file-bytes 2000000"
+    )]
+    Secrets(ScanSecretsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ScanSecretsArgs {
+    /// One or more repo-local paths (files or directories) to scan. At least one is required.
+    #[arg(value_name = "PATH", required = true, num_args = 1..)]
+    pub paths: Vec<String>,
+
+    /// Print the machine-readable report to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Include files ignored by .gitignore during directory traversal.
+    #[arg(long)]
+    pub include_ignored: bool,
+
+    /// Skip files larger than N bytes (default: 1048576, i.e. 1 MiB).
+    #[arg(long, value_name = "N")]
+    pub max_file_bytes: Option<u64>,
+
+    /// Exit 3 (blocked_secret_findings) when any findings are present.
+    #[arg(long)]
+    pub fail_on_findings: bool,
 }
 
 #[derive(Debug, Args)]
