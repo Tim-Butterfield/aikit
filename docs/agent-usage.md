@@ -424,7 +424,9 @@ responsible for keeping it within the intended repository-local boundary.
 ## Building Agent-Specific Skills or Wrappers Outside aikit
 
 Agent-specific integrations can wrap `aikit`, but they belong **outside** this
-repository (so `aikit` stays agent-agnostic). Guidance for such wrappers:
+repository (so `aikit` stays agent-agnostic). For worked example wrapper patterns,
+see [`agent-integration-examples.md`](agent-integration-examples.md) (documentation
+only; it adds no agent-specific behavior to `aikit`). Guidance for such wrappers:
 
 - Call `aikit` CLI commands rather than re-implementing or duplicating its policy.
 - Parse the `--json` output where available instead of scraping human text.

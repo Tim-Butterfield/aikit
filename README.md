@@ -5,8 +5,8 @@
 ## Status
 
 - Personal tool — built primarily for the architect's own use.
-- Private repo — not currently intended for public distribution, and may never be.
-- Not yet pushed to any remote.
+- Private repo — pushed to the private GitHub remote; not currently intended for
+  public distribution, and may never be.
 - Implemented so far: `aikit batch start`, `aikit batch changed` (Batch 1),
   `aikit inventory repo` (Batch 2), `aikit review generate` from explicit files
   (Batch 3) or a batch anchor (Batch 4), and the `aikit script` family —
@@ -425,6 +425,8 @@ is not implemented (anchor mode covers the changed-since-anchor case). See
 [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
 [`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
 implementation plan,
-[`docs/agent-usage.md`](docs/agent-usage.md) for the agent-agnostic usage guide, and
+[`docs/agent-usage.md`](docs/agent-usage.md) for the agent-agnostic usage guide,
+[`docs/agent-integration-examples.md`](docs/agent-integration-examples.md) for
+example external-wrapper integration patterns, and
 [`docs/decisions/0001-create-aikit.md`](docs/decisions/0001-create-aikit.md) for the
 repo-creation decision.
