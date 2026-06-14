@@ -3,5 +3,6 @@
 .scratch/
 .claude/
 /.aikit/
+/tmp/
 
 # Cargo.lock is intentionally tracked: aikit is a binary application.
