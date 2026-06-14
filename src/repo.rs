@@ -454,7 +454,7 @@ pub fn doctor(args: RepoDoctorArgs) -> Result<(), AikitError> {
             None => println!("  .aikit/ ignored: no"),
         }
         println!("  default output root: {}", record.default_output_root);
-        println!("  allowed script locations:");
+        println!("  allowed script input locations (not aikit state):");
         for l in &record.allowed_script_locations {
             println!("    {} ({})", l.path, exists_word(l.exists));
         }

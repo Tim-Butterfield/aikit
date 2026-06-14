@@ -318,3 +318,40 @@ fn doctor_reports_locations_interpreters_and_metadata() {
     assert!(json["repo_root"].as_str().is_some());
     assert!(json["git_branch"].as_str().is_some());
 }
+
+/// The human-readable (non-JSON) doctor output must label the script-input
+/// allowlist so `.scratch/...` entries cannot be misread as aikit state, while
+/// keeping readiness/state/output fields tied to `.aikit/`.
+#[test]
+fn doctor_text_output_distinguishes_script_inputs_from_aikit_state() {
+    let repo = init_repo();
+    let p = repo.path();
+    let out = aikit(p)
+        .args(["repo", "doctor"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).expect("stdout is UTF-8");
+
+    // The script-input allowlist is clearly marked as not aikit state.
+    assert!(
+        text.contains("allowed script input locations (not aikit state):"),
+        "doctor text output missing clarified script-input label:\n{text}"
+    );
+
+    // Readiness/state/output fields stay tied to `.aikit/`.
+    assert!(
+        text.contains(".aikit/:"),
+        "missing .aikit/ state line:\n{text}"
+    );
+    assert!(
+        text.contains(".aikit/temp/:"),
+        "missing .aikit/temp/ state line:\n{text}"
+    );
+    assert!(
+        text.contains("default output root: .aikit/outputs"),
+        "missing .aikit/outputs default output root line:\n{text}"
+    );
+}
