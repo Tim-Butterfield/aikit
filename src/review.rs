@@ -31,7 +31,7 @@ const TS_FORMAT: &[FormatItem<'static>] =
 const ID_FORMAT: &[FormatItem<'static>] =
     format_description!("[year][month][day]-[hour][minute][second]");
 
-const BUNDLE_NAME: &str = "run_for_review.txt";
+const BUNDLE_NAME: &str = "review_bundle.txt";
 const MANIFEST_NAME: &str = "manifest.json";
 
 /// A resolved input file: its apparent repo-relative path, the real path to read,

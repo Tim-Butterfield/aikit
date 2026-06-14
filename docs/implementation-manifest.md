@@ -1078,3 +1078,51 @@ valid findings, both remediated before commit: (1) `env snapshot` dirty probe co
 Slices 1–5 are all implemented. There are no remaining approved post-initial command
 slices; any further command work requires a new explicitly approved task. No separate
 roadmap document is created.
+
+## Post-Initial Cleanup — Review bundle filename
+
+A small post-initial cleanup (not a new command slice) renamed the generated review-bundle
+text artifact from `run_for_review.txt` to **`review_bundle.txt`**. The initial six batches
+and the five post-initial command slices remain historical and complete.
+
+### Cleanup scope (implemented)
+
+- `aikit review generate` (both `--files` and `--anchor` modes) writes `review_bundle.txt`
+  plus `manifest.json`; the manifest's `bundle_path` records `review_bundle.txt`. The old
+  file is no longer written and no compatibility duplicate is created.
+- Filename change only: command family, flags, bundle content format, path-safety, caps,
+  hashing, and anchor behavior are unchanged.
+- `aikit output show` already recognizes review artifacts by the `reviews/` family and the
+  `manifest.json` summary, and lists the directory's files generically — so it handles new
+  (`review_bundle.txt`) and older historical (`run_for_review.txt`) local review outputs
+  with no code change. Existing local `run_for_review.txt` artifacts are left untouched (no
+  migration of ignored local outputs).
+
+### Cleanup expected committed files
+
+| Path | Classification | Purpose |
+|---|---|---|
+| `src/review.rs` | modified | `BUNDLE_NAME` constant `run_for_review.txt` → `review_bundle.txt` (drives the path builder, manifest `bundle_path`, `written`, and human output) |
+| `src/cli.rs` | modified | review help text references the new bundle file name |
+| `tests/cli_review.rs` | modified | expect `review_bundle.txt`; assert old file is not created; assert human output names it |
+| `tests/cli_output.rs` | modified | add `output show` recognition of a review artifact containing `review_bundle.txt` |
+| `tests/cli_integration.rs` | modified | end-to-end review `written` reports `review_bundle.txt` |
+| `README.md` | modified | active bundle name → `review_bundle.txt` (historical note) |
+| `docs/agent-usage.md` | modified | active bundle name → `review_bundle.txt` |
+| `docs/aikit-cli-spec.md` | modified | §5.4 output convention → `review_bundle.txt` |
+| `docs/aikit-implementation-plan.md` | modified | §9.3 design + new §22.7 cleanup note |
+| `docs/implementation-manifest.md` | modified | this section |
+
+### Cleanup expected-vs-actual
+
+To be confirmed against `git status` / `git diff` before commit. **Justified deviations
+from the task's likely-file list:** `src/formats.rs` is expected to be **unchanged** — the
+manifest's `bundle_path` is populated from `review.rs`'s `BUNDLE_NAME` constant, and the
+`ReviewManifest.bundle_path` field is filename-agnostic, so no struct change is needed.
+`src/output_cmd.rs` is expected to be **unchanged** — `output show` lists a review
+directory's files generically and reads `manifest.json`; it never hard-codes the bundle
+filename, so it recognizes the renamed bundle without modification (covered by a new
+`tests/cli_output.rs` test). `tests/cli_integration.rs` IS modified (the end-to-end test
+asserts the reported bundle filename). Historical Batch 3/4 records in this manifest that
+mention `run_for_review.txt` (as originally delivered/tested) are retained as historical and
+are **superseded by this rename**. No ignored/local-only files are staged.

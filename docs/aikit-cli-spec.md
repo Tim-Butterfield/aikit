@@ -132,6 +132,13 @@ alias (see the implementation plan's post-initial command-shape correction).
 - report truncation;
 - include repo metadata.
 
+**Output convention:**
+- each bundle writes two files under `.aikit/outputs/reviews/<review-id>/`: the readable
+  text bundle `review_bundle.txt` and `manifest.json` (whose `bundle_path` records
+  `review_bundle.txt`). The text bundle was renamed from the historical
+  `run_for_review.txt` in a post-initial cleanup; older local review outputs may still
+  carry the old name, but new generation uses `review_bundle.txt` and never writes both.
+
 ### 5.5 `aikit inventory repo`
 
 **Purpose:**

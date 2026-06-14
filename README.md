@@ -193,8 +193,10 @@ aikit review generate --anchor .aikit/outputs/batches/<anchor-id>.json
   and excludes unchanged files; the anchor must exist, be a valid batch anchor, and
   belong to this repo (missing/invalid/cross-repo anchors are rejected).
 - Generates two files in a per-review directory:
-  - `run_for_review.txt` — a readable bundle with per-file headings, SHA-256,
-    size, truncation status, and fenced file contents.
+  - `review_bundle.txt` — a readable bundle with per-file headings, SHA-256,
+    size, truncation status, and fenced file contents. (Older local review outputs
+    may use the previous name `run_for_review.txt`; new bundles use
+    `review_bundle.txt`.)
   - `manifest.json` — `schema_version`, `kind`, `review_id`, `repo_root`,
     `git_head`, `generated_at`, `inputs`, `limits`, `files`, `bundle_path`, and
     `totals`.

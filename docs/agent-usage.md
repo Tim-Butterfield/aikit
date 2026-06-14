@@ -250,8 +250,9 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
   (escapes via `..`, absolute paths, or symlinks are rejected). Caps
   (`--max-file-bytes`, `--max-file-lines`, `--max-total-bytes`) keep the bundle bounded
   and record truncation/omission.
-- **Output:** `run_for_review.txt` and `manifest.json` under
-  `.aikit/outputs/reviews/<id>/` by default. Created paths are printed (and in `--json`).
+- **Output:** `review_bundle.txt` and `manifest.json` under
+  `.aikit/outputs/reviews/<id>/` by default. Created paths are printed (and in `--json`);
+  agents should report or cite the generated paths rather than guessing them.
 
 ### `aikit review generate --anchor <anchor.json>`
 
@@ -312,9 +313,10 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
 - The precomputed `--changed <changed.json>` review mode is **intentionally not
   implemented** (anchor mode covers the changed-since-anchor case); it would only be
   added later if a real need appears.
-- Every bundle produces `run_for_review.txt` (readable, with per-file headings,
+- Every bundle produces `review_bundle.txt` (readable, with per-file headings,
   SHA-256, size, truncation status, and fenced contents) and `manifest.json` (schema
-  version, ids, repo metadata, inputs, limits, per-file records, totals).
+  version, ids, repo metadata, inputs, limits, per-file records, totals). Older local
+  review outputs may use the previous name `run_for_review.txt`.
 - Agents should report or cite the generated paths rather than guessing them.
 
 ## Script Runner Use

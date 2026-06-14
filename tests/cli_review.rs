@@ -169,14 +169,21 @@ fn generate_creates_review_directory_and_files() {
         .args(["review", "generate", "--files", "README.md", "src/main.rs"])
         .assert()
         .success()
-        .stdout(predicates::str::contains("Review bundle written"));
+        .stdout(predicates::str::contains("Review bundle written"))
+        // Human output references the new bundle file name.
+        .stdout(predicates::str::contains("review_bundle.txt"));
 
     let dir = find_review_dir(repo.path());
     assert!(
-        dir.join("run_for_review.txt").is_file(),
-        "run_for_review.txt written"
+        dir.join("review_bundle.txt").is_file(),
+        "review_bundle.txt written"
     );
     assert!(dir.join("manifest.json").is_file(), "manifest.json written");
+    // The old bundle file name must not be produced for new bundles.
+    assert!(
+        !dir.join("run_for_review.txt").exists(),
+        "old run_for_review.txt must not be created"
+    );
 }
 
 #[test]
@@ -201,7 +208,7 @@ fn manifest_has_expected_shape() {
     }
     assert_eq!(json["kind"], "aikit.review_bundle");
     assert_eq!(json["schema_version"], 1);
-    assert_eq!(json["bundle_path"], "run_for_review.txt");
+    assert_eq!(json["bundle_path"], "review_bundle.txt");
     assert_eq!(json["inputs"]["mode"], "explicit_files");
 
     let f = &json["files"][0];
@@ -374,7 +381,7 @@ fn max_total_bytes_omits_later_files_deterministically() {
 
     // The omitted file's bundle section carries its hash and size (not blank).
     let dir = find_review_dir(repo.path());
-    let bundle = fs::read_to_string(dir.join("run_for_review.txt")).unwrap();
+    let bundle = fs::read_to_string(dir.join("review_bundle.txt")).unwrap();
     let z_sha = z["sha256"].as_str().unwrap();
     assert!(
         bundle.contains(&format!("### zzzz.txt\nSHA-256: {z_sha}\nSize: 6")),
@@ -409,7 +416,7 @@ fn nested_backticks_do_not_break_the_bundle() {
         .assert()
         .success();
     let dir = find_review_dir(repo.path());
-    let bundle = fs::read_to_string(dir.join("run_for_review.txt")).unwrap();
+    let bundle = fs::read_to_string(dir.join("review_bundle.txt")).unwrap();
     // The wrapper fence must be longer than the file's own ``` run.
     assert!(
         bundle.contains("````text"),
@@ -492,8 +499,8 @@ fn review_json_includes_written_artifact_paths() {
     assert!(
         written
             .iter()
-            .any(|w| w.starts_with(".aikit/outputs/reviews/") && w.ends_with("run_for_review.txt")),
-        "written must list run_for_review.txt: {written:?}"
+            .any(|w| w.starts_with(".aikit/outputs/reviews/") && w.ends_with("review_bundle.txt")),
+        "written must list review_bundle.txt: {written:?}"
     );
     assert!(
         written.iter().any(|w| w.ends_with("manifest.json")),
@@ -517,8 +524,12 @@ fn anchor_mode_creates_review_dir_and_files() {
         .stdout(predicates::str::contains(".aikit/outputs/reviews/"));
 
     let dir = find_review_dir(repo.path());
-    assert!(dir.join("run_for_review.txt").is_file());
+    assert!(dir.join("review_bundle.txt").is_file());
     assert!(dir.join("manifest.json").is_file());
+    assert!(
+        !dir.join("run_for_review.txt").exists(),
+        "old run_for_review.txt must not be created in anchor mode"
+    );
 }
 
 #[test]
@@ -541,7 +552,7 @@ fn anchor_mode_records_mode_and_anchor_in_manifest() {
         .iter()
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
-    assert!(written.iter().any(|w| w.ends_with("run_for_review.txt")));
+    assert!(written.iter().any(|w| w.ends_with("review_bundle.txt")));
     assert!(written.iter().any(|w| w.ends_with("manifest.json")));
 }
 

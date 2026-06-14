@@ -427,25 +427,27 @@ Recommended JSON shape:
 Recommended default output:
 
 ```text
-.aikit/outputs/reviews/<review-id>/run_for_review.txt
+.aikit/outputs/reviews/<review-id>/review_bundle.txt
 .aikit/outputs/reviews/<review-id>/manifest.json
 ```
 
-The text bundle can keep the historically useful `run_for_review.txt` name initially because that is recognizable in existing workflows.
+The text bundle was initially named `run_for_review.txt` (recognizable from existing
+workflows) and was **renamed to `review_bundle.txt` in a post-initial cleanup** for a more
+generally applicable name (see § Post-Initial Cleanup — Review bundle filename). New
+generation writes only `review_bundle.txt`; older local review outputs may still carry the
+old name.
 
-The command name should be modernized:
+The command name is:
 
 ```text
 aikit review generate
 ```
 
-The output file may remain:
+The output text-bundle file name is:
 
 ```text
-run_for_review.txt
+review_bundle.txt
 ```
-
-until a better name proves useful.
 
 Recommended manifest shape:
 
@@ -479,7 +481,7 @@ Recommended manifest shape:
       "cap_hit": null
     }
   ],
-  "bundle_path": "run_for_review.txt",
+  "bundle_path": "review_bundle.txt",
   "totals": {
     "files_total": 1,
     "files_included": 1,
@@ -1405,3 +1407,25 @@ These follow the same noun-family / action grammar. There are no remaining appro
 post-initial command slices; any further command work would require a new explicitly
 approved task, with the same checks / review / manifest discipline used for the initial
 batches and these slices.
+
+### 22.7 Post-Initial Cleanup — Review bundle filename (implemented)
+
+A small post-initial cleanup (not a new command slice) renamed the generated review-bundle
+text artifact from `run_for_review.txt` to the more generally applicable
+**`review_bundle.txt`**. Only new output generation is affected:
+
+- `aikit review generate` (both `--files` and `--anchor` modes) writes `review_bundle.txt`
+  plus `manifest.json`; the manifest's `bundle_path` records `review_bundle.txt`. The old
+  file is no longer written, and no compatibility duplicate is created.
+- The command family, flags, bundle content format, path-safety, caps, hashing, and anchor
+  behavior are unchanged — this is a filename change only.
+- `aikit output show` recognizes review artifacts by the `reviews/` family and reads
+  `manifest.json`; it lists whatever files the directory contains, so it handles both new
+  (`review_bundle.txt`) and older historical (`run_for_review.txt`) local review outputs.
+- Existing local review directories that already contain `run_for_review.txt` are left
+  untouched (no migration of ignored local outputs).
+
+Historical references to `run_for_review.txt` elsewhere in this plan (the original §9.3
+design rationale and the Batch 3 scope/steps records) are **superseded by this rename** and
+retained only as historical record; current behavior is `review_bundle.txt`. The five-slice
+post-initial command expansion remains complete (§22.6).

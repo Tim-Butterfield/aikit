@@ -255,6 +255,35 @@ fn show_run_inventory_review() {
 }
 
 #[test]
+fn show_review_artifact_lists_review_bundle() {
+    let repo = init_repo();
+    // A current review artifact: manifest.json + the renamed bundle file.
+    let dir = outputs(repo.path()).join("reviews").join("rev2");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("manifest.json"),
+        r#"{"schema_version":1,"kind":"aikit.review_bundle","review_id":"rev2","bundle_path":"review_bundle.txt"}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("review_bundle.txt"), "# aikit Review Bundle\n").unwrap();
+
+    let rev = json_out(repo.path(), &["output", "show", "rev2"]);
+    assert_eq!(rev["artifact"]["family"], "reviews");
+    assert_eq!(rev["metadata"]["kind"], "aikit.review_bundle");
+    let files: Vec<&str> = rev["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert!(
+        files.contains(&"review_bundle.txt"),
+        "output show lists review_bundle.txt: {files:?}"
+    );
+    assert!(files.contains(&"manifest.json"));
+}
+
+#[test]
 fn show_missing_artifact_is_blocked() {
     let repo = init_repo();
     make_all(repo.path());

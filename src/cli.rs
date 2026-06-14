@@ -136,7 +136,7 @@ neither, is invalid usage. The precomputed `--changed <changed.json>` mode is no
 implemented. Key flags: --max-file-bytes / --max-file-lines (truncate a file and record \
 it), --max-total-bytes (omit later files once the running total is exceeded), --output \
 <dir> (override the output root), and --json (also print the manifest JSON to stdout).\n\n\
-`review generate` writes run_for_review.txt and manifest.json under the default output \
+`review generate` writes review_bundle.txt and manifest.json under the default output \
 directory .aikit/outputs/reviews/<id>/; override with --output <dir>. `.scratch` is never \
 used by default and is available only via an explicit `--output .scratch/...`. Created \
 artifact paths are printed; output is local-only.",
@@ -386,12 +386,12 @@ rejected. With `--anchor`, the changed files since the anchor are computed with 
 logic as `batch changed` (the anchor must exist, be a valid batch anchor, and belong to \
 this repo); changed files are bundled and unchanged files are excluded.\n\n\
 In both modes files are sorted by repo-relative path, hashed (SHA-256), and packaged into \
-run_for_review.txt plus a manifest.json. Caps keep the bundle bounded: --max-file-bytes and \
+review_bundle.txt plus a manifest.json. Caps keep the bundle bounded: --max-file-bytes and \
 --max-file-lines truncate individual files (recording truncation and the bound), and \
 --max-total-bytes omits later files once the running total would be exceeded (recording \
 omitted_reason/cap_hit). Every scoped file appears exactly once in the manifest whether \
 included, truncated, or omitted.\n\n\
-Output (run_for_review.txt + manifest.json) is written under the default local output \
+Output (review_bundle.txt + manifest.json) is written under the default local output \
 directory .aikit/outputs/reviews/<id>/; override the root with --output <dir> (pass a \
 .scratch/... path to use scratch, which is never used by default). Created artifact paths \
 are printed in human output; with --json the manifest is printed to stdout including a \

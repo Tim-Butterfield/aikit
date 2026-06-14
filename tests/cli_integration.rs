@@ -141,8 +141,8 @@ fn local_workflow_end_to_end() {
         "review --json reports manifest.json: {written:?}"
     );
     assert!(
-        written.iter().any(|w| w.ends_with("run_for_review.txt")),
-        "review --json reports run_for_review.txt: {written:?}"
+        written.iter().any(|w| w.ends_with("review_bundle.txt")),
+        "review --json reports review_bundle.txt: {written:?}"
     );
     // The reported artifacts actually exist on disk (paths are repo-relative).
     for w in &written {
