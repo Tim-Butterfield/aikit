@@ -42,6 +42,18 @@ aikit batch changed --anchor .aikit/outputs/batches/<anchor-id>.json --json"
     )]
     Batch(BatchCli),
 
+    /// Mechanical Git diff reports (e.g. from a batch anchor).
+    #[command(
+        long_about = "Mechanical Git diff reports. `diff anchor <anchor>` diffs a batch \
+anchor's recorded Git head against the current working tree. Inspection only: it creates \
+no review bundle or output artifact, advances no workflow state, and never touches \
+remotes.",
+        after_help = "Examples:\n  \
+aikit diff anchor <anchor-id>\n  \
+aikit diff anchor <anchor-id> --json"
+    )]
+    Diff(DiffCli),
+
     /// Generate a mechanical inventory of repository files.
     #[command(
         long_about = "Generate a mechanical inventory of repository files: a deterministic, \
@@ -589,6 +601,34 @@ aikit batch changed --anchor .aikit/outputs/batches/<anchor-id>.json\n  \
 aikit batch changed --anchor <anchor.json> --include-untracked --hash --json"
     )]
     Changed(ChangedArgs),
+
+    /// List batch anchors (read-only; does not auto-select an anchor).
+    #[command(
+        long_about = "List valid batch anchors under the selected output root's batches/ \
+folder (default .aikit/outputs/batches/). Read-only: creates and deletes nothing. \
+Invalid files in the folder are reported as skipped rather than guessed. Anchors are \
+sorted deterministically by anchor id.\n\n\
+This command does NOT auto-select a \"latest\" anchor for work — anchor-consuming \
+commands (`batch changed`, `review generate --anchor`, `diff anchor`) always require an \
+explicit anchor. Supports `--root <path>` (a known output root) and `--json`.",
+        after_help = "Examples:\n  \
+aikit batch list\n  \
+aikit batch list --json"
+    )]
+    List(BatchListArgs),
+
+    /// Show one explicit batch anchor (read-only; does not auto-select an anchor).
+    #[command(
+        long_about = "Show one explicit batch anchor by path or id (read-only; creates and \
+deletes nothing). The argument is a repo-relative path to an anchor JSON file or an \
+anchor id looked up under the output root's batches/ folder. The file is validated as a \
+batch anchor and must belong to the current repository; path escapes are rejected. This \
+command does NOT auto-select a \"latest\" anchor. Supports `--root <path>` and `--json`.",
+        after_help = "Examples:\n  \
+aikit batch show <anchor-id>\n  \
+aikit batch show .aikit/outputs/batches/<anchor-id>.json --json"
+    )]
+    Show(BatchShowArgs),
 }
 
 #[derive(Debug, Args)]
@@ -623,4 +663,82 @@ pub struct ChangedArgs {
     /// Compute a SHA-256 for each reported file that still exists.
     #[arg(long)]
     pub hash: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct BatchListArgs {
+    /// Output root to inspect (default: .aikit/outputs; an explicit root must be under
+    /// .aikit/outputs/ or .scratch/work/outputs/).
+    #[arg(long, value_name = "PATH")]
+    pub root: Option<String>,
+
+    /// Print the machine-readable list to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct BatchShowArgs {
+    /// Anchor to show: a repo-relative path to an anchor JSON file, or an anchor id.
+    #[arg(value_name = "ANCHOR")]
+    pub anchor: String,
+
+    /// Output root used for id lookup (default: .aikit/outputs; an explicit root must be
+    /// under .aikit/outputs/ or .scratch/work/outputs/).
+    #[arg(long, value_name = "PATH")]
+    pub root: Option<String>,
+
+    /// Print the machine-readable anchor to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct DiffCli {
+    #[command(subcommand)]
+    pub command: DiffCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DiffCommand {
+    /// Diff a batch anchor's recorded head against the current working tree.
+    #[command(
+        long_about = "Produce a mechanical Git diff from a batch anchor's recorded Git head \
+to the current working-tree state. The argument is a repo-relative path to an anchor JSON \
+file or an anchor id (looked up under .aikit/outputs/batches/). The anchor is validated \
+and must belong to the current repository; its recorded `git_head` is used as the diff \
+base and must still exist locally (else blocked).\n\n\
+The diff (`git diff <base>`) captures committed changes since the anchor and current \
+tracked working-tree/index changes. Untracked file CONTENTS are not part of a Git diff \
+and are not included — use `batch changed --include-untracked` for that view. This is \
+inspection only: it creates no review bundle or output artifact and never touches \
+remotes.\n\n\
+Default output includes anchor metadata, the name-status file list, and the diff stat. \
+`--stat` is the explicit form of the stat output (included by default); `--patch` appends \
+the full patch text; `--json` emits the structured report (patch only when `--patch`).",
+        after_help = "Examples:\n  \
+aikit diff anchor <anchor-id>\n  \
+aikit diff anchor <anchor-id> --json\n  \
+aikit diff anchor .aikit/outputs/batches/<anchor-id>.json --patch"
+    )]
+    Anchor(DiffAnchorArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DiffAnchorArgs {
+    /// Anchor to diff against: a repo-relative path to an anchor JSON file, or an anchor id.
+    #[arg(value_name = "ANCHOR")]
+    pub anchor: String,
+
+    /// Explicitly include the diff stat (it is included by default).
+    #[arg(long)]
+    pub stat: bool,
+
+    /// Append the full patch text (and include it in --json output).
+    #[arg(long)]
+    pub patch: bool,
+
+    /// Print the machine-readable diff report to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
 }

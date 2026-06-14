@@ -1346,19 +1346,36 @@ approved post-initial correction and the approved direction for further slices.
     directories are left in place. `--older-than` and `--all` are mutually exclusive;
     `--family`, `--root`, `--json`.
 
-### 22.4 Approved post-initial slices (direction only)
+### 22.4 Batch inspection + anchor diff (Slice 4 — implemented)
 
-The following remaining slices are approved direction. **Slices 1–3 are implemented;
-Slices 4–5 are not implemented** and are recorded only so the command grammar stays
-coherent. No separate roadmap document is created — this section is the record.
+- Extend the `batch` family and add a `diff` family, all mechanical inspection/diff
+  commands that do not auto-select a "latest" anchor, advance workflow state, perform
+  semantic review, create review bundles, or touch remotes:
+  - `aikit batch list` — list valid batch anchors under the selected output root's
+    batches/ folder (read-only); empty success when absent; invalid files reported as
+    skipped; sorted by anchor id; `--root`, `--json`.
+  - `aikit batch show <anchor-path-or-id>` — show one explicit anchor (read-only):
+    resolve by path or id; reject path escapes (`blocked_path_escape`); validate it is a
+    batch anchor belonging to the current repo (`blocked_missing_anchor` /
+    `blocked_invalid_anchor`); `--root`, `--json`.
+  - `aikit diff anchor <anchor-path-or-id>` — diff the anchor's recorded `git_head`
+    (base; must exist locally else `blocked_missing_base_commit`) against the current
+    working tree via `git diff <base>` (committed + tracked worktree changes). Untracked
+    file contents are not included. Creates no review bundle/output artifact; `--stat`
+    (default), `--patch`, `--json`.
+
+### 22.5 Approved post-initial slices (direction only)
+
+The following remaining slice is approved direction. **Slices 1–4 are implemented;
+Slice 5 is not implemented** and is recorded only so the command grammar stays coherent.
+No separate roadmap document is created — this section is the record.
 
 - **Slice 1 (implemented):** `aikit script run`, `aikit script check`; remove
   `aikit run script`.
 - **Slice 2 (implemented):** `aikit repo init`, `aikit repo doctor`.
 - **Slice 3 (implemented):** `aikit output list`, `aikit output show`,
   `aikit output clean`.
-- **Slice 4 (approved, not implemented):** `aikit batch list`, `aikit batch show`,
-  `aikit diff anchor`.
+- **Slice 4 (implemented):** `aikit batch list`, `aikit batch show`, `aikit diff anchor`.
 - **Slice 5 (approved, not implemented):** `aikit env snapshot`, `aikit scan secrets`.
 
 These follow the same noun-family / action grammar. Each future slice will be implemented

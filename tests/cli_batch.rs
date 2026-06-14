@@ -690,3 +690,286 @@ fn batch_changed_mtime_results_include_limitation_note() {
         .expect("notes present for mtime results");
     assert!(!notes.is_empty(), "expected a limitation note");
 }
+
+// ---- batch list / batch show (Slice 4) ----
+
+fn batches_dir(repo: &Path) -> std::path::PathBuf {
+    repo.join(".aikit/outputs/batches")
+}
+
+/// Write a valid anchor JSON with the given id and head, recording this repo as its root.
+fn make_anchor(repo: &Path, id: &str, head: &str) {
+    let dir = batches_dir(repo);
+    fs::create_dir_all(&dir).unwrap();
+    let body = serde_json::json!({
+        "schema_version": 1,
+        "kind": "aikit.batch_anchor",
+        "anchor_id": id,
+        "created_at": "2026-01-01T00:00:00Z",
+        "repo_root": repo.to_str().unwrap(),
+        "git_head": head,
+        "git_branch": "main",
+        "git_status_porcelain": "",
+        "filesystem_anchor_time": "2026-01-01T00:00:00Z",
+    });
+    fs::write(
+        dir.join(format!("{id}.json")),
+        serde_json::to_string_pretty(&body).unwrap(),
+    )
+    .unwrap();
+}
+
+fn json_of(repo: &Path, args: &[&str]) -> Value {
+    let out = aikit(repo)
+        .args(args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    serde_json::from_slice(&out).expect("stdout is JSON")
+}
+
+#[test]
+fn batch_help_lists_list_and_show() {
+    AssertCommand::new(cargo_bin("aikit"))
+        .args(["batch", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("start"))
+        .stdout(predicates::str::contains("changed"))
+        .stdout(predicates::str::contains("list"))
+        .stdout(predicates::str::contains("show"));
+}
+
+#[test]
+fn batch_list_help_says_no_auto_select() {
+    AssertCommand::new(cargo_bin("aikit"))
+        .args(["batch", "list", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(".aikit/outputs/batches/"))
+        .stdout(predicates::str::contains("--json"))
+        .stdout(predicates::str::contains("does NOT auto-select"));
+}
+
+#[test]
+fn batch_show_help_says_no_auto_select() {
+    AssertCommand::new(cargo_bin("aikit"))
+        .args(["batch", "show", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("path or id"))
+        .stdout(predicates::str::contains("--json"))
+        .stdout(predicates::str::contains("does NOT auto-select"));
+}
+
+#[test]
+fn batch_list_empty_when_no_batch_dir() {
+    let repo = init_repo();
+    let json = json_of(repo.path(), &["batch", "list", "--json"]);
+    assert_eq!(json["kind"], "aikit.batch_list");
+    assert_eq!(json["counts"]["total"], 0);
+    assert_eq!(json["anchors"].as_array().unwrap().len(), 0);
+    assert!(
+        !batches_dir(repo.path()).exists(),
+        "list must not create dirs"
+    );
+}
+
+#[test]
+fn batch_list_lists_valid_and_skips_invalid_sorted() {
+    let repo = init_repo();
+    make_anchor(repo.path(), "20260101-000000-aaaaaaa", "deadbee");
+    make_anchor(repo.path(), "20260102-000000-bbbbbbb", "deadbee");
+    // An invalid JSON file under the batch folder.
+    fs::write(batches_dir(repo.path()).join("broken.json"), "{ not json").unwrap();
+    // A non-anchor json (wrong kind).
+    fs::write(
+        batches_dir(repo.path()).join("wrong.json"),
+        r#"{"schema_version":1,"kind":"aikit.repo_inventory"}"#,
+    )
+    .unwrap();
+
+    let json = json_of(repo.path(), &["batch", "list", "--json"]);
+    let anchors = json["anchors"].as_array().unwrap();
+    assert_eq!(anchors.len(), 2);
+    // Sorted by anchor id.
+    assert_eq!(anchors[0]["anchor_id"], "20260101-000000-aaaaaaa");
+    assert_eq!(anchors[1]["anchor_id"], "20260102-000000-bbbbbbb");
+    assert_eq!(json["counts"]["skipped"], 2);
+    assert!(!json["skipped"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn batch_list_does_not_auto_select_latest() {
+    // batch list is read-only and reports all anchors; it must never single one out.
+    let repo = init_repo();
+    make_anchor(repo.path(), "20260101-000000-aaaaaaa", "deadbee");
+    make_anchor(repo.path(), "20260102-000000-bbbbbbb", "deadbee");
+    let json = json_of(repo.path(), &["batch", "list", "--json"]);
+    assert_eq!(json["anchors"].as_array().unwrap().len(), 2);
+    assert!(json.get("latest").is_none() && json.get("selected").is_none());
+}
+
+#[test]
+fn batch_show_by_path_and_id() {
+    let repo = init_repo();
+    make_anchor(repo.path(), "anchor-x", "deadbee");
+    // By id.
+    let json = json_of(repo.path(), &["batch", "show", "anchor-x", "--json"]);
+    assert_eq!(json["kind"], "aikit.batch_show");
+    assert_eq!(json["anchor"]["anchor_id"], "anchor-x");
+    assert_eq!(json["belongs_to_repo"], true);
+    // By repo-relative path.
+    let json2 = json_of(
+        repo.path(),
+        &[
+            "batch",
+            "show",
+            ".aikit/outputs/batches/anchor-x.json",
+            "--json",
+        ],
+    );
+    assert_eq!(json2["anchor"]["anchor_id"], "anchor-x");
+}
+
+#[test]
+fn batch_show_rejects_missing() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args(["batch", "show", "nope"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_missing_anchor"));
+}
+
+#[test]
+fn batch_show_rejects_invalid_anchor() {
+    let repo = init_repo();
+    fs::create_dir_all(batches_dir(repo.path())).unwrap();
+    fs::write(
+        batches_dir(repo.path()).join("bad.json"),
+        r#"{"schema_version":1,"kind":"not-an-anchor"}"#,
+    )
+    .unwrap();
+    aikit(repo.path())
+        .args(["batch", "show", "bad"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_invalid_anchor"));
+}
+
+#[test]
+fn batch_show_rejects_foreign_repo_anchor() {
+    let repo = init_repo();
+    let other = init_repo();
+    // Anchor recorded under a different repo root.
+    let dir = batches_dir(repo.path());
+    fs::create_dir_all(&dir).unwrap();
+    let body = serde_json::json!({
+        "schema_version": 1, "kind": "aikit.batch_anchor", "anchor_id": "foreign",
+        "created_at": "2026-01-01T00:00:00Z", "repo_root": other.path().to_str().unwrap(),
+        "git_head": "deadbee", "git_branch": "main", "git_status_porcelain": "",
+        "filesystem_anchor_time": "2026-01-01T00:00:00Z",
+    });
+    fs::write(dir.join("foreign.json"), body.to_string()).unwrap();
+    aikit(repo.path())
+        .args(["batch", "show", "foreign"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_invalid_anchor"));
+}
+
+#[test]
+fn batch_show_rejects_path_escape() {
+    let repo = init_repo();
+    let outside = TempDir::new().unwrap();
+    let anchor = outside.path().join("a.json");
+    fs::write(
+        &anchor,
+        r#"{"schema_version":1,"kind":"aikit.batch_anchor"}"#,
+    )
+    .unwrap();
+    aikit(repo.path())
+        .args(["batch", "show", anchor.to_str().unwrap()])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_path_escape"));
+}
+
+#[test]
+fn batch_show_rejects_parent_traversal_path() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args(["batch", "show", "../../etc/anything.json"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_path_escape"));
+}
+
+#[test]
+fn batch_show_id_is_not_shadowed_by_stray_repo_file() {
+    let repo = init_repo();
+    make_anchor(repo.path(), "shadowid", "deadbee");
+    // A stray repo file with the same name as the anchor id must NOT shadow id lookup.
+    fs::write(repo.path().join("shadowid"), "not an anchor\n").unwrap();
+    let json = json_of(repo.path(), &["batch", "show", "shadowid", "--json"]);
+    assert_eq!(json["anchor"]["anchor_id"], "shadowid");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_batches_dir_is_not_followed() {
+    use std::os::unix::fs::symlink;
+    let repo = init_repo();
+    // A real anchor lives elsewhere in the repo; `.aikit/outputs/batches` is a symlink to
+    // that directory. List/lookup must NOT follow the symlinked batches directory.
+    let real_dir = repo.path().join("real-batches");
+    fs::create_dir_all(&real_dir).unwrap();
+    let body = serde_json::json!({
+        "schema_version": 1, "kind": "aikit.batch_anchor", "anchor_id": "sym1",
+        "created_at": "2026-01-01T00:00:00Z", "repo_root": repo.path().to_str().unwrap(),
+        "git_head": "deadbee", "git_branch": "main", "git_status_porcelain": "",
+        "filesystem_anchor_time": "2026-01-01T00:00:00Z",
+    });
+    fs::write(real_dir.join("sym1.json"), body.to_string()).unwrap();
+    fs::create_dir_all(repo.path().join(".aikit/outputs")).unwrap();
+    symlink(&real_dir, repo.path().join(".aikit/outputs/batches")).unwrap();
+
+    // batch list reports an empty list (symlinked batches/ not read).
+    let json = json_of(repo.path(), &["batch", "list", "--json"]);
+    assert_eq!(json["counts"]["total"], 0);
+    // batch show by id does not resolve through the symlinked batches/.
+    aikit(repo.path())
+        .args(["batch", "show", "sym1"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_missing_anchor"));
+}
+
+#[test]
+fn batch_list_skips_anchor_with_invalid_timestamp() {
+    let repo = init_repo();
+    make_anchor(repo.path(), "good1", "deadbee");
+    let dir = batches_dir(repo.path());
+    let body = serde_json::json!({
+        "schema_version": 1, "kind": "aikit.batch_anchor", "anchor_id": "badts",
+        "created_at": "not-a-time", "repo_root": repo.path().to_str().unwrap(),
+        "git_head": "deadbee", "git_branch": "main", "git_status_porcelain": "",
+        "filesystem_anchor_time": "not-a-time",
+    });
+    fs::write(dir.join("badts.json"), body.to_string()).unwrap();
+
+    let json = json_of(repo.path(), &["batch", "list", "--json"]);
+    let anchors = json["anchors"].as_array().unwrap();
+    assert_eq!(anchors.len(), 1);
+    assert_eq!(anchors[0]["anchor_id"], "good1");
+    assert!(json["counts"]["skipped"].as_u64().unwrap() >= 1);
+}

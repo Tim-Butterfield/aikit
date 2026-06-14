@@ -6,6 +6,7 @@
 
 mod batch;
 mod cli;
+mod diff;
 mod errors;
 mod formats;
 mod inventory;
@@ -19,8 +20,8 @@ mod script;
 use clap::Parser;
 
 use cli::{
-    BatchCommand, Cli, Command, InventoryCommand, OutputCommand, RepoCommand, ReviewCommand,
-    ScriptCommand,
+    BatchCommand, Cli, Command, DiffCommand, InventoryCommand, OutputCommand, RepoCommand,
+    ReviewCommand, ScriptCommand,
 };
 use errors::AikitError;
 
@@ -38,6 +39,11 @@ fn run(cli: Cli) -> Result<(), AikitError> {
         Command::Batch(batch) => match batch.command {
             BatchCommand::Start(args) => batch::start(args),
             BatchCommand::Changed(args) => batch::changed(args),
+            BatchCommand::List(args) => batch::list(args),
+            BatchCommand::Show(args) => batch::show(args),
+        },
+        Command::Diff(diff_cli) => match diff_cli.command {
+            DiffCommand::Anchor(args) => diff::anchor(args),
         },
         Command::Inventory(inv) => match inv.command {
             InventoryCommand::Repo(args) => inventory::repo(args),

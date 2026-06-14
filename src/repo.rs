@@ -120,6 +120,42 @@ fn absolute_git_dir(root: &Path) -> Option<PathBuf> {
     run_git(root, &["rev-parse", "--absolute-git-dir"]).map(PathBuf::from)
 }
 
+/// Whether `rev` resolves to a commit object present in the local repository. Used by
+/// `diff anchor` to verify the anchor's recorded base head still exists locally.
+pub fn commit_exists(root: &Path, rev: &str) -> bool {
+    if rev.is_empty() {
+        return false;
+    }
+    Command::new("git")
+        .current_dir(root)
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{rev}^{{commit}}"),
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Raw stdout of `git diff <args>` (e.g. `--name-status -z <base>`, `--stat <base>`,
+/// or `<base>` for a patch), or `None` on failure. Internal whitespace/NUL bytes are
+/// preserved (only lossy UTF-8 decoding is applied).
+pub fn git_diff(root: &Path, args: &[&str]) -> Option<String> {
+    let mut full = vec!["diff"];
+    full.extend_from_slice(args);
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(&full)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 /// The ignore source covering the whole `.aikit/` directory (e.g. `.gitignore` or
 /// `.git/info/exclude`), or `None` when `.aikit/` is not ignored by any Git ignore
 /// source. Probes the `.aikit` directory itself (via `git check-ignore -v`), so a rule

@@ -149,6 +149,33 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
 - **Output:** a JSON anchor under `.aikit/outputs/batches/<anchor-id>.json` by default.
   The created path is printed (and included in `--json`). Anchors are durable artifacts.
 
+### `aikit batch list` / `aikit batch show`
+
+- **Purpose:** inspect existing batch anchors (read-only).
+- **Typical use:** see which anchors exist, and review one explicitly before using it for
+  anchor-consuming work.
+- **Constraints:** must be inside a Git repository, else `blocked_repo_not_found`. Both
+  are read-only (create/delete nothing). `batch list` reports valid anchors and flags
+  invalid files as skipped. `batch show <anchor-path-or-id>` validates the anchor and that
+  it belongs to the current repo; path escapes are rejected. **Neither auto-selects a
+  "latest" anchor** — always pass an explicit anchor to anchor-consuming commands.
+- **Output:** `batch list` → `aikit.batch_list`; `batch show` → `aikit.batch_show`. Both
+  support `--json` and `--root`.
+
+### `aikit diff anchor <anchor-path-or-id>`
+
+- **Purpose:** produce a mechanical Git diff from an anchor's recorded head to the current
+  working tree.
+- **Typical use:** see what changed since an explicit anchor was created.
+- **Constraints:** validates the anchor and that it belongs to this repo; uses the
+  anchor's recorded `git_head` as the diff base (must still exist locally, else blocked).
+  Reports committed changes since the anchor and current tracked working-tree changes.
+  **Untracked file contents are not part of the Git diff** — use
+  `batch changed --include-untracked` for that. Inspection only: it creates no review
+  bundle or output artifact, advances no workflow state, and never touches remotes.
+- **Output:** `aikit.diff_anchor` (anchor metadata, base/current head, name-status files,
+  counts, stat, notes). `--stat` (default), `--patch`, and `--json` supported.
+
 ### `aikit batch changed --anchor <anchor.json>`
 
 - **Purpose:** report files created or modified since a given anchor.
@@ -333,7 +360,9 @@ responsible for keeping it within the intended repository-local boundary.
 ## What Agents Must Not Assume
 
 - Do **not** assume the "latest" anchor automatically — always pass an explicit
-  `--anchor <anchor.json>`.
+  `--anchor <anchor.json>` (or explicit anchor argument). Use `aikit batch list` /
+  `aikit batch show` to inspect which anchors exist and choose one deliberately; these
+  commands never select an anchor for you.
 - Do **not** assume `.scratch` is the default output — the default is `.aikit/outputs/`.
 - Do **not** assume `script run` makes a script safe — it does not.
 - Do **not** assume any remote/push/fetch/pull behavior exists — `aikit` never touches

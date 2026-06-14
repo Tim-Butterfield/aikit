@@ -55,6 +55,9 @@
 - `aikit output list` (post-initial Slice 3)
 - `aikit output show` (post-initial Slice 3)
 - `aikit output clean` (post-initial Slice 3)
+- `aikit batch list` (post-initial Slice 4)
+- `aikit batch show` (post-initial Slice 4)
+- `aikit diff anchor` (post-initial Slice 4)
 
 ## Implementation Direction
 
@@ -278,6 +281,27 @@ aikit output clean --all --execute      # delete all known output artifacts
   so management can never be redirected at `.git/`, `target/`, or other non-output
   directories); all three support `--json`.
 
+### Batch inspection and anchor diff
+
+Inspect existing batch anchors and diff one against the current tree. These are
+**explicit inspection** commands — they never auto-select a "latest" anchor for work;
+anchor-consuming commands always take an explicit anchor:
+
+```sh
+aikit batch list                      # list batch anchors (read-only)
+aikit batch show <anchor-path-or-id>  # show one explicit anchor (read-only)
+aikit diff anchor <anchor-path-or-id> # diff the anchor's head vs the current tree
+```
+
+- `batch list` and `batch show` are **read-only**; `batch list` reports valid anchors and
+  flags invalid files as skipped (never guessed).
+- `diff anchor` uses the anchor's **recorded Git head** as the diff base (it must still
+  exist locally) and reports committed changes since the anchor plus current tracked
+  working-tree changes, via Git. **Untracked file contents are not part of the Git diff**
+  — use `aikit batch changed --include-untracked` for that view. `diff anchor` is
+  mechanical inspection only: it creates no review bundle or output artifact and never
+  touches remotes. `--stat` (included by default), `--patch`, and `--json` are supported.
+
 ## Install for Local Use
 
 Install the `aikit` binary so downstream repositories can call `aikit ...` directly,
@@ -340,9 +364,11 @@ Batch 1 (`batch start`, `batch changed`), Batch 2 (`inventory repo`), Batch 3 +
 Batch 4 (`review generate --files` and `review generate --anchor`), and the
 `script` family (`script run` / `script check`) commands are implemented. Post-initial
 work has added the corrected `script` command shape (Slice 1), the `repo` family
-(`repo init` / `repo doctor`, Slice 2), and the `output` family (`output list` /
-`output show` / `output clean`, Slice 3). The precomputed `--changed <changed.json>`
-review mode is not implemented (anchor mode covers the changed-since-anchor case). See
+(`repo init` / `repo doctor`, Slice 2), the `output` family (`output list` /
+`output show` / `output clean`, Slice 3), and batch inspection + anchor diff
+(`batch list` / `batch show` / `diff anchor`, Slice 4). The precomputed
+`--changed <changed.json>` review mode is not implemented (anchor mode covers the
+changed-since-anchor case). See
 [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
 [`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
 implementation plan,

@@ -929,8 +929,71 @@ needs no output-management step). `Cargo.toml` / `Cargo.lock` are expected to be
 
 ### Remaining future slices (approved direction, not implemented)
 
-Slices 4–5 remain approved direction only (see implementation plan §22.4); not
-implemented in Slice 3. No separate roadmap document is created.
+Recorded as of Slice 3 (see implementation plan §22.5). (Slice 4 has since been
+implemented — see the "Post-Initial Command Shape — Slice 4" section below.) No separate
+roadmap document is created.
 
 - Slice 4: `aikit batch list`, `aikit batch show`, `aikit diff anchor`.
+- Slice 5: `aikit env snapshot`, `aikit scan secrets`.
+
+## Post-Initial Command Shape — Slice 4
+
+An approved post-initial slice extends the `batch` family and adds a `diff` family.
+Recorded here (not as a new initial batch). Slices 1–3 and the six initial batches remain
+historical and complete.
+
+### Slice 4 scope (implemented)
+
+- `aikit batch list` — list valid batch anchors under the selected output root's batches/
+  folder (read-only); empty success when absent; invalid files reported as skipped; sorted
+  by anchor id; `--root`, `--json`. Does NOT auto-select a "latest" anchor.
+- `aikit batch show <anchor-path-or-id>` — show one explicit anchor (read-only): resolve
+  by path or id; reject path escapes; validate it is a batch anchor belonging to the
+  current repo; `--root`, `--json`. Does NOT auto-select.
+- `aikit diff anchor <anchor-path-or-id>` — mechanical `git diff` from the anchor's
+  recorded `git_head` (base) to the current working tree; base must exist locally;
+  untracked file contents excluded; creates no review bundle/output artifact; never
+  touches remotes; `--stat` (default), `--patch`, `--json`.
+- New format kinds: `aikit.batch_list`, `aikit.batch_show`, `aikit.diff_anchor`. New
+  blocked state: `blocked_missing_base_commit` (existing missing/invalid-anchor and
+  path-escape states reused). No new runtime dependency.
+
+### Slice 4 expected committed files
+
+| Path | Classification | Purpose |
+|---|---|---|
+| `src/batch.rs` | modified | add `list`/`show` + anchor-resolution helpers; make `load_anchor` reusable |
+| `src/diff.rs` | new | `diff anchor` command + name-status parsing |
+| `src/cli.rs` | modified | `batch list`/`show` args; new `Diff`/`DiffCommand::Anchor` family |
+| `src/main.rs` | modified | module + dispatch for batch list/show and diff anchor |
+| `src/formats.rs` | modified | add `AnchorView`/`BatchList`/`BatchShow`/`DiffAnchor` (+ helpers) and three kinds |
+| `src/errors.rs` | modified | add `blocked_missing_base_commit` |
+| `src/repo.rs` | modified | add `commit_exists` + `git_diff` helpers |
+| `src/output.rs` | modified | host the shared validated `resolve_output_root` (moved from `output_cmd.rs`) |
+| `src/output_cmd.rs` | modified | call the shared `output::resolve_output_root` (DRY; no behavior change) |
+| `tests/cli_batch.rs` | modified | add `batch list`/`show` tests |
+| `tests/cli_diff.rs` | new | `diff anchor` tests |
+| `README.md` | modified | batch inspection + anchor diff section + command list/current-state |
+| `docs/agent-usage.md` | modified | new commands in command families + workflow note |
+| `docs/aikit-cli-spec.md` | modified | §5.8 batch list/show + diff anchor (post-initial Slice 4) |
+| `docs/aikit-implementation-plan.md` | modified | §22.4 Slice 4 implemented; §22.5 future slices |
+| `docs/implementation-manifest.md` | modified | this section |
+
+### Slice 4 expected-vs-actual
+
+To be confirmed against `git status` / `git diff` before commit. **Justified deviations
+from the task's likely-file list:** `src/repo.rs` is modified (added `commit_exists` /
+`git_diff` git helpers used by `diff anchor`); and `src/output.rs` + `src/output_cmd.rs`
+are modified to centralize the validated `resolve_output_root` (moved from `output_cmd.rs`
+to `output.rs`) so `batch list`/`show` reuse the same `--root` safety logic rather than
+duplicating it — a DRY refactor with no behavior change to `output`. `tests/cli_integration.rs`
+is expected to be **unchanged** (the existing end-to-end test needs no batch-inspection
+step). `Cargo.toml` / `Cargo.lock` are expected to be unchanged (no new dependency). No
+ignored/local-only files are staged.
+
+### Remaining future slice (approved direction, not implemented)
+
+Slice 5 remains approved direction only (see implementation plan §22.5); not implemented
+in Slice 4. No separate roadmap document is created.
+
 - Slice 5: `aikit env snapshot`, `aikit scan secrets`.

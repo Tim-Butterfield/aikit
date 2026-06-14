@@ -213,6 +213,38 @@ arbitrary files elsewhere are not treated as aikit output artifacts.
   non-output directories; support `--family`, `--root`, `--json`; report mode, filters,
   candidates, and the exact deleted paths.
 
+### 5.8 `aikit batch list` / `aikit batch show` / `aikit diff anchor`
+
+These commands are **post-initial Slice 4** (not part of the completed initial batches).
+They are mechanical inspection/diff commands: they do not auto-select a "latest" anchor,
+advance workflow state, perform semantic review, create review bundles, or touch remotes.
+`batch list`/`batch show` extend the `batch` family; `diff anchor` is a new `diff` family.
+
+**`aikit batch list` — behavior:**
+- detect the repo root (block `blocked_repo_not_found` outside a repository);
+- inspect the selected output root's `batches/` folder; empty success if it is absent;
+- list only valid batch anchor JSON files, sorted by anchor id; report invalid files as
+  skipped (not guessed); read-only; support `--root`, `--json`;
+- it does NOT auto-select any anchor.
+
+**`aikit batch show <anchor-path-or-id>` — behavior:**
+- detect the repo root (block outside a repository);
+- resolve the argument as a repo-relative anchor path or an id under the batches/ folder;
+  reject path escapes (`blocked_path_escape`); validate it is a batch anchor belonging to
+  the current repo (else `blocked_missing_anchor` / `blocked_invalid_anchor`);
+- read-only; support `--root`, `--json`; does NOT auto-select.
+
+**`aikit diff anchor <anchor-path-or-id>` — behavior:**
+- detect the repo root (block outside a repository); resolve and validate the explicit
+  anchor (same blocked states as `batch show`);
+- use the anchor's recorded `git_head` as the diff base; the base must exist locally, else
+  `blocked_missing_base_commit`;
+- generate a deterministic `git diff <base>` against the current working tree (committed
+  changes since the anchor plus current tracked worktree/index changes); untracked file
+  contents are not included (callers use `batch changed --include-untracked`);
+- create no review bundle or output artifact; never touch remotes; support `--stat`
+  (included by default), `--patch`, and `--json`.
+
 ## 6. Output Conventions
 
 - The default output root is always `.aikit/outputs/` under the detected repo root.

@@ -9,7 +9,7 @@
 //! `.git/` (none of which are output families under the output root).
 
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use serde_json::Value;
@@ -23,6 +23,7 @@ use crate::formats::{
     OutputArtifact, OutputClean, OutputCleanCounts, OutputCleanFilters, OutputCounts, OutputFile,
     OutputList, OutputShow, KIND_OUTPUT_CLEAN, KIND_OUTPUT_LIST, KIND_OUTPUT_SHOW, SCHEMA_VERSION,
 };
+use crate::output::resolve_output_root;
 use crate::repo;
 
 const TS_FORMAT: &[FormatItem<'static>] =
@@ -68,69 +69,6 @@ fn family_str(f: &OutputFamily) -> &'static str {
         OutputFamily::Reviews => "reviews",
         OutputFamily::Runs => "runs",
     }
-}
-
-/// Resolve the selected output root (default `<repo>/.aikit/outputs`) and reject
-/// escapes. `repo_canon` must be the canonicalized repo root.
-fn resolve_output_root(repo_canon: &Path, root_arg: Option<&str>) -> Result<PathBuf, AikitError> {
-    let candidate = match root_arg {
-        None => return Ok(repo_canon.join(".aikit").join("outputs")),
-        Some(p) => {
-            let pb = PathBuf::from(p);
-            if pb.is_absolute() {
-                pb
-            } else {
-                repo_canon.join(pb)
-            }
-        }
-    };
-    if candidate
-        .components()
-        .any(|c| matches!(c, Component::ParentDir))
-    {
-        return Err(AikitError::blocked(
-            blocked::PATH_ESCAPE,
-            format!("--root must not contain `..`: {}", candidate.display()),
-        ));
-    }
-    let resolved = if candidate.exists() {
-        let c = fs::canonicalize(&candidate)
-            .map_err(|e| AikitError::other(format!("failed to resolve --root: {e}")))?;
-        if !c.starts_with(repo_canon) {
-            return Err(AikitError::blocked(
-                blocked::PATH_ESCAPE,
-                "--root resolves outside the repository".to_string(),
-            ));
-        }
-        c
-    } else {
-        if !candidate.starts_with(repo_canon) {
-            return Err(AikitError::blocked(
-                blocked::PATH_ESCAPE,
-                "--root resolves outside the repository".to_string(),
-            ));
-        }
-        candidate
-    };
-    // An explicit --root must be a known aikit output area, so that `clean` can never be
-    // redirected at protected/non-output directories (e.g. `.`, `.git`, `target`,
-    // `.scratch`, `.claude`, `.aikit`, `.aikit/temp`) where ordinary `runs/`/`reviews/`
-    // etc. subdirectories could be mistaken for output artifacts and deleted.
-    let rel = resolved
-        .strip_prefix(repo_canon)
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_default();
-    let allowed = [".aikit/outputs", ".scratch/work/outputs"];
-    let ok = allowed
-        .iter()
-        .any(|a| rel == *a || rel.starts_with(&format!("{a}/")));
-    if !ok {
-        return Err(AikitError::blocked(
-            blocked::PATH_ESCAPE,
-            format!("--root must be under .aikit/outputs/ or .scratch/work/outputs/ (got {rel:?})"),
-        ));
-    }
-    Ok(resolved)
 }
 
 /// Discover all known artifacts under `output_root`. Symlinked family directories and

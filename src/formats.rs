@@ -16,6 +16,9 @@ pub const KIND_REPO_DOCTOR: &str = "aikit.repo_doctor";
 pub const KIND_OUTPUT_LIST: &str = "aikit.output_list";
 pub const KIND_OUTPUT_SHOW: &str = "aikit.output_show";
 pub const KIND_OUTPUT_CLEAN: &str = "aikit.output_clean";
+pub const KIND_BATCH_LIST: &str = "aikit.batch_list";
+pub const KIND_BATCH_SHOW: &str = "aikit.batch_show";
+pub const KIND_DIFF_ANCHOR: &str = "aikit.diff_anchor";
 
 /// A point-in-time anchor written by `aikit batch start`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -332,6 +335,106 @@ pub struct OutputClean {
     /// Repo-relative paths actually deleted (only in execute mode).
     pub deleted: Vec<String>,
     pub counts: OutputCleanCounts,
+    pub blocked_state: Option<String>,
+}
+
+/// An anchor view (the anchor's fields plus its repo-relative path) for `batch list`
+/// and `batch show`.
+#[derive(Debug, Serialize)]
+pub struct AnchorView {
+    pub schema_version: u32,
+    pub kind: String,
+    pub anchor_id: String,
+    /// Repo-relative path of the anchor file.
+    pub path: String,
+    pub created_at: String,
+    pub repo_root: String,
+    pub git_branch: String,
+    pub git_head: String,
+    pub git_status_porcelain: String,
+    pub filesystem_anchor_time: String,
+}
+
+/// A file under the batch folder that could not be parsed as a valid anchor.
+#[derive(Debug, Serialize)]
+pub struct SkippedAnchor {
+    pub path: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BatchListCounts {
+    pub total: usize,
+    pub skipped: usize,
+}
+
+/// The report written by `aikit batch list`.
+#[derive(Debug, Serialize)]
+pub struct BatchList {
+    pub schema_version: u32,
+    pub kind: String,
+    pub repo_root: String,
+    pub output_root: String,
+    pub generated_at: String,
+    pub anchors: Vec<AnchorView>,
+    pub skipped: Vec<SkippedAnchor>,
+    pub counts: BatchListCounts,
+    pub blocked_state: Option<String>,
+}
+
+/// The report written by `aikit batch show`.
+#[derive(Debug, Serialize)]
+pub struct BatchShow {
+    pub schema_version: u32,
+    pub kind: String,
+    pub repo_root: String,
+    pub anchor: AnchorView,
+    /// True once the anchor has been validated as belonging to the current repo.
+    pub belongs_to_repo: bool,
+    pub blocked_state: Option<String>,
+}
+
+/// One file in a `diff anchor` report (from `git diff --name-status`).
+#[derive(Debug, Serialize)]
+pub struct DiffFile {
+    pub path: String,
+    /// Word form: added / modified / deleted / renamed / copied / type_changed / …
+    pub status: String,
+    /// Source path for renames/copies; `null` otherwise.
+    pub old_path: Option<String>,
+    /// The raw git status code (e.g. `M`, `A`, `R100`).
+    pub raw_status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiffCounts {
+    pub total: usize,
+    pub added: usize,
+    pub modified: usize,
+    pub deleted: usize,
+    pub renamed: usize,
+    pub copied: usize,
+    pub other: usize,
+}
+
+/// The report written by `aikit diff anchor`.
+#[derive(Debug, Serialize)]
+pub struct DiffAnchor {
+    pub schema_version: u32,
+    pub kind: String,
+    pub repo_root: String,
+    pub generated_at: String,
+    pub anchor: AnchorRef,
+    pub base_git_head: String,
+    pub current_git_head: String,
+    pub tracked_tree_clean: bool,
+    pub files: Vec<DiffFile>,
+    pub counts: DiffCounts,
+    pub stat: String,
+    pub notes: Vec<String>,
+    /// Full patch text; present only when `--patch` was given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch: Option<String>,
     pub blocked_state: Option<String>,
 }
 

@@ -22,6 +22,7 @@ pub mod blocked {
     pub const FORBIDDEN_OPERATION: &str = "blocked_forbidden_operation";
     pub const ARTIFACT_NOT_FOUND: &str = "blocked_artifact_not_found";
     pub const AMBIGUOUS_ARTIFACT: &str = "blocked_ambiguous_artifact";
+    pub const MISSING_BASE_COMMIT: &str = "blocked_missing_base_commit";
 }
 
 #[derive(Debug, Error)]
