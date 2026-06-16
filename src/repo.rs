@@ -12,7 +12,8 @@ use std::process::Command;
 use crate::cli::{RepoDoctorArgs, RepoInitArgs};
 use crate::errors::{blocked, AikitError};
 use crate::formats::{
-    PathStatus, RepoDoctor, RepoInit, KIND_REPO_DOCTOR, KIND_REPO_INIT, SCHEMA_VERSION,
+    PathStatus, RepoDoctor, RepoInit, RunnerStatus, KIND_REPO_DOCTOR, KIND_REPO_INIT,
+    SCHEMA_VERSION,
 };
 use crate::policy::script as policy;
 
@@ -68,27 +69,26 @@ pub fn git_status_porcelain(root: &Path) -> String {
     run_git_raw(root, &["--no-optional-locks", "status", "--porcelain=v1"]).unwrap_or_default()
 }
 
-/// `git status --porcelain=v1 -z --untracked-files=all` — used for change detection.
-///
-/// - `-z` makes records NUL-delimited and paths **verbatim and unquoted** (no
-///   C-style quoting/escaping), so paths with spaces, arrows, or special bytes are
-///   safe to use directly; rename/copy records carry the original path as a
-///   separate NUL field rather than an ambiguous `orig -> new` string.
-/// - `--untracked-files=all` lists files inside otherwise-untracked directories
-///   individually (no directory collapsing), so each path can be matched precisely
-///   against the output-directory excludes.
-pub fn git_status_changed(root: &Path) -> String {
-    run_git_raw(
-        root,
-        &[
-            "--no-optional-locks",
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-        ],
-    )
-    .unwrap_or_default()
+/// Repo-relative paths of all tracked files (`git ls-files -z`), sorted. Used for the
+/// optional initial snapshot recorded by `batch start --snapshot`. Returns an empty
+/// vector when git fails or there are no tracked files.
+pub fn git_tracked_files(root: &Path) -> Vec<String> {
+    let output = match Command::new("git")
+        .current_dir(root)
+        .args(["--no-optional-locks", "ls-files", "-z"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&output);
+    let mut files: Vec<String> = text
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    files.sort();
+    files
 }
 
 /// Whether the **tracked** working tree has uncommitted changes (modified, staged,
@@ -371,6 +371,8 @@ pub fn doctor(args: RepoDoctorArgs) -> Result<(), AikitError> {
         })
         .collect();
 
+    // Shell interpreter probe is informational only (kept for compatibility); readiness
+    // now uses cross-OS runner availability instead of requiring Unix shells.
     let interpreters: Vec<PathStatus> = ["/bin/sh", "/bin/zsh"]
         .iter()
         .map(|p| PathStatus {
@@ -378,6 +380,17 @@ pub fn doctor(args: RepoDoctorArgs) -> Result<(), AikitError> {
             exists: Path::new(p).exists(),
         })
         .collect();
+
+    // Runner availability aligned with policy::script (the script runner's own model).
+    let runners: Vec<RunnerStatus> = policy::runner_availability()
+        .into_iter()
+        .map(|r| RunnerStatus {
+            name: r.name.to_string(),
+            available: r.available,
+            applicable: r.applicable,
+        })
+        .collect();
+    let any_runner_available = runners.iter().any(|r| r.available);
 
     let current_exe = std::env::current_exe()
         .ok()
@@ -394,14 +407,18 @@ pub fn doctor(args: RepoDoctorArgs) -> Result<(), AikitError> {
                 .to_string(),
         );
     }
-    for i in &interpreters {
-        if !i.exists {
-            warnings.push(format!("interpreter {} is missing", i.path));
-        }
+    if !any_runner_available {
+        warnings.push(
+            "no supported script runner is available on this system (looked for: \
+sh, bash, zsh, pwsh, powershell, cmd, python3, python, node)"
+                .to_string(),
+        );
     }
 
-    let interpreters_present = interpreters.iter().all(|i| i.exists);
-    let ready = temp_dir_exists && aikit_ignored && interpreters_present;
+    // Readiness: local aikit state is sane AND at least one supported runner exists for
+    // this OS. It does NOT require any specific Unix shell (so Windows is ready with
+    // pwsh/cmd, and a host without zsh is still ready).
+    let ready = temp_dir_exists && aikit_ignored && any_runner_available;
 
     let record = RepoDoctor {
         schema_version: SCHEMA_VERSION,
@@ -418,6 +435,8 @@ pub fn doctor(args: RepoDoctorArgs) -> Result<(), AikitError> {
         default_output_root: ".aikit/outputs".to_string(),
         allowed_script_locations,
         interpreters,
+        runners,
+        any_runner_available,
         current_exe,
         version,
         warnings,
@@ -458,10 +477,22 @@ pub fn doctor(args: RepoDoctorArgs) -> Result<(), AikitError> {
         for l in &record.allowed_script_locations {
             println!("    {} ({})", l.path, exists_word(l.exists));
         }
-        println!("  interpreters:");
+        println!("  shell interpreters (informational):");
         for i in &record.interpreters {
             println!("    {} ({})", i.path, exists_word(i.exists));
         }
+        println!("  script runners:");
+        for r in &record.runners {
+            let state = if r.available {
+                "available"
+            } else if r.applicable {
+                "not found"
+            } else {
+                "not applicable (other OS)"
+            };
+            println!("    {} ({state})", r.name);
+        }
+        println!("  any runner available: {}", record.any_runner_available);
         if let Some(exe) = &record.current_exe {
             println!("  current exe: {exe}");
         }

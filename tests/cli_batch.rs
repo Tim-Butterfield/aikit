@@ -65,6 +65,16 @@ fn find_anchor(dir: &Path) -> std::path::PathBuf {
     entry.path()
 }
 
+/// `aikit batch start`, then pause so later edits have an mtime strictly newer than the
+/// anchor file (the timestamp reference). Files written before this stay older and are
+/// excluded by timestamp-based discovery. Returns the anchor file path.
+fn anchor_then_wait(dir: &Path) -> std::path::PathBuf {
+    aikit(dir).args(["batch", "start"]).assert().success();
+    let anchor = find_anchor(dir);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    anchor
+}
+
 // ---- Help availability ----
 
 #[test]
@@ -98,12 +108,26 @@ fn batch_start_help_is_available() {
 
 #[test]
 fn batch_changed_help_is_available() {
-    AssertCommand::new(cargo_bin("aikit"))
+    let out = AssertCommand::new(cargo_bin("aikit"))
         .args(["batch", "changed", "--help"])
         .assert()
         .success()
-        .stdout(predicates::str::contains("--anchor"))
-        .stdout(predicates::str::contains("--include-untracked"));
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8_lossy(&out);
+    assert!(help.contains("--anchor"));
+    assert!(help.contains("--hash"));
+    // Timestamp-based discovery is described; the removed flags are gone.
+    assert!(help.to_lowercase().contains("timestamp"));
+    assert!(
+        !help.contains("--include-untracked"),
+        "the deprecated --include-untracked flag must be gone"
+    );
+    assert!(
+        !help.contains("--tracked-only"),
+        "the deprecated --tracked-only flag must be gone"
+    );
 }
 
 // ---- batch start ----
@@ -128,14 +152,38 @@ fn batch_start_creates_anchor_with_expected_fields() {
         "repo_root",
         "git_head",
         "git_branch",
-        "git_status_porcelain",
         "filesystem_anchor_time",
+        "aikit_version",
     ] {
         assert!(json.get(field).is_some(), "anchor missing field: {field}");
     }
     assert_eq!(json["kind"], "aikit.batch_anchor");
     assert_eq!(json["schema_version"], 1);
     assert!(json["git_head"].as_str().unwrap().len() >= 7);
+    // The anchor is a minimal timestamp reference and must NOT capture Git status.
+    assert!(
+        json.get("git_status_porcelain").is_none(),
+        "anchor must not record git_status_porcelain"
+    );
+}
+
+#[test]
+fn batch_start_json_anchor_has_no_git_status() {
+    let repo = init_repo();
+    // A dirty tree so any captured status would be non-empty if it existed.
+    fs::write(repo.path().join("README.md"), "initial\ndirty\n").unwrap();
+    let out = aikit(repo.path())
+        .args(["batch", "start", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&out).expect("stdout is JSON");
+    assert!(
+        json["anchor"].get("git_status_porcelain").is_none(),
+        "batch start --json anchor must not include git_status_porcelain"
+    );
 }
 
 #[test]
@@ -280,13 +328,9 @@ fn batch_changed_missing_anchor_is_blocked() {
 }
 
 #[test]
-fn batch_changed_detects_modified_tracked_file() {
+fn batch_changed_detects_file_modified_after_anchor() {
     let repo = init_repo();
-    aikit(repo.path())
-        .args(["batch", "start"])
-        .assert()
-        .success();
-    let anchor = find_anchor(repo.path());
+    let anchor = anchor_then_wait(repo.path());
 
     fs::write(repo.path().join("README.md"), "initial\nmore\n").unwrap();
 
@@ -311,95 +355,66 @@ fn batch_changed_detects_modified_tracked_file() {
         .find(|f| f["path"] == "README.md")
         .expect("README.md reported as changed");
     assert_eq!(readme["status"], "modified");
-    assert_eq!(readme["source"], "git_status");
+    // Detection is timestamp-based, never git_status.
+    assert_eq!(readme["source"], "anchor_mtime");
 }
 
 #[test]
-fn batch_changed_include_untracked_detects_new_file_by_mtime() {
+fn batch_changed_excludes_file_dirty_before_anchor() {
     let repo = init_repo();
-    aikit(repo.path())
-        .args(["batch", "start"])
-        .assert()
-        .success();
-    let anchor = find_anchor(repo.path());
+    // README is dirty relative to HEAD BEFORE the anchor (the tree is dirty).
+    fs::write(repo.path().join("README.md"), "initial\npre-anchor\n").unwrap();
 
-    // Ensure the new file's mtime is strictly after the anchor's whole-second time.
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    // Anchor mode must not require a clean tree.
+    let anchor = anchor_then_wait(repo.path());
+
+    // A different file is modified AFTER the anchor.
+    fs::write(repo.path().join("after.txt"), "new\n").unwrap();
+
+    let json = changed_json(repo.path(), &anchor, &[]);
+    let paths: Vec<&str> = json["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert!(
+        paths.contains(&"after.txt"),
+        "file modified after the anchor is reported: {paths:?}"
+    );
+    assert!(
+        !paths.contains(&"README.md"),
+        "file dirty vs HEAD but modified before the anchor is NOT reported: {paths:?}"
+    );
+}
+
+#[test]
+fn batch_changed_detects_untracked_file_modified_after_anchor() {
+    let repo = init_repo();
+    let anchor = anchor_then_wait(repo.path());
+
     fs::write(repo.path().join("new_file.txt"), "fresh\n").unwrap();
 
-    let out = aikit(repo.path())
-        .args([
-            "batch",
-            "changed",
-            "--anchor",
-            anchor.to_str().unwrap(),
-            "--include-untracked",
-            "--json",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let json: Value = serde_json::from_slice(&out).unwrap();
+    let json = changed_json(repo.path(), &anchor, &[]);
     let files = json["files"].as_array().unwrap();
     let created = files
         .iter()
         .find(|f| f["path"] == "new_file.txt")
-        .expect("new untracked file detected");
-    assert_eq!(created["status"], "created");
-    assert_eq!(created["source"], "mtime");
-
-    // Default (without --include-untracked) must NOT report the untracked file.
-    let out2 = aikit(repo.path())
-        .args([
-            "batch",
-            "changed",
-            "--anchor",
-            anchor.to_str().unwrap(),
-            "--json",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let json2: Value = serde_json::from_slice(&out2).unwrap();
-    assert!(
-        json2["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|f| f["path"] != "new_file.txt"),
-        "untracked file must be excluded by default"
-    );
+        .expect("untracked file modified after the anchor is reported");
+    // Status reflects "modified after anchor"; source is timestamp-based.
+    assert_eq!(created["status"], "modified");
+    assert_eq!(created["source"], "anchor_mtime");
 }
 
 #[test]
 fn batch_changed_excludes_aikit_output_by_default() {
     let repo = init_repo();
-    // Fallback case: anchor lands in .aikit/outputs/batches and is untracked.
-    aikit(repo.path())
-        .args(["batch", "start"])
-        .assert()
-        .success();
-    let anchor = find_anchor(repo.path());
+    // Fallback case: anchor lands in .aikit/outputs/batches and is created after start.
+    let anchor = anchor_then_wait(repo.path());
+    // A change after the anchor so the result set is non-empty.
+    fs::write(repo.path().join("touched.txt"), "x\n").unwrap();
 
-    let out = aikit(repo.path())
-        .args([
-            "batch",
-            "changed",
-            "--anchor",
-            anchor.to_str().unwrap(),
-            "--include-untracked",
-            "--json",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let json: Value = serde_json::from_slice(&out).unwrap();
+    let json = changed_json(repo.path(), &anchor, &[]);
     assert!(
         json["files"]
             .as_array()
@@ -418,11 +433,7 @@ fn batch_changed_paths_are_repo_relative_and_sorted() {
     git(repo.path(), &["add", "a.txt", "b.txt"]);
     git(repo.path(), &["commit", "-q", "-m", "add files"]);
 
-    aikit(repo.path())
-        .args(["batch", "start"])
-        .assert()
-        .success();
-    let anchor = find_anchor(repo.path());
+    let anchor = anchor_then_wait(repo.path());
 
     fs::write(repo.path().join("b.txt"), "b2\n").unwrap();
     fs::write(repo.path().join("a.txt"), "a2\n").unwrap();
@@ -476,91 +487,51 @@ fn changed_json(dir: &Path, anchor: &Path, extra: &[&str]) -> Value {
 }
 
 #[test]
-fn batch_changed_detects_tracked_deletion() {
+fn batch_changed_does_not_report_deleted_file() {
     let repo = init_repo();
     fs::write(repo.path().join("data.txt"), "data\n").unwrap();
     git(repo.path(), &["add", "data.txt"]);
     git(repo.path(), &["commit", "-q", "-m", "add data"]);
 
-    aikit(repo.path())
-        .args(["batch", "start"])
-        .assert()
-        .success();
-    let anchor = find_anchor(repo.path());
+    let anchor = anchor_then_wait(repo.path());
 
     fs::remove_file(repo.path().join("data.txt")).unwrap();
 
+    // Deleted files are out of scope for timestamp-based discovery (no content on disk).
     let json = changed_json(repo.path(), &anchor, &[]);
-    let deleted = json["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|f| f["path"] == "data.txt")
-        .expect("deleted file reported");
-    assert_eq!(deleted["status"], "deleted");
-    assert!(deleted["size_bytes"].is_null(), "deleted file has no size");
-    assert_eq!(json["counts"]["deleted"], 1);
+    assert!(
+        json["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["path"] != "data.txt"),
+        "a deleted file must not be reported"
+    );
+    assert_eq!(json["counts"]["deleted"], 0);
 }
 
 #[test]
-fn batch_changed_reports_rename_as_delete_and_create() {
-    let repo = init_repo();
-    fs::write(repo.path().join("old.txt"), "content\n").unwrap();
-    git(repo.path(), &["add", "old.txt"]);
-    git(repo.path(), &["commit", "-q", "-m", "add old"]);
-
-    aikit(repo.path())
-        .args(["batch", "start"])
-        .assert()
-        .success();
-    let anchor = find_anchor(repo.path());
-
-    git(repo.path(), &["mv", "old.txt", "new.txt"]);
-
-    let json = changed_json(repo.path(), &anchor, &[]);
-    let files = json["files"].as_array().unwrap();
-    let old = files
-        .iter()
-        .find(|f| f["path"] == "old.txt")
-        .expect("renamed-from path reported");
-    let new = files
-        .iter()
-        .find(|f| f["path"] == "new.txt")
-        .expect("renamed-to path reported");
-    assert_eq!(old["status"], "deleted");
-    assert_eq!(new["status"], "created");
-}
-
-#[test]
-fn batch_changed_handles_rename_with_separator_in_path() {
-    // A path whose name literally contains " -> " must not corrupt rename parsing
-    // (NUL-delimited porcelain keeps the original path as a separate field).
+fn batch_changed_handles_special_chars_in_path() {
+    // The filesystem walk uses real paths (no porcelain parsing), so a name containing
+    // " -> " is handled verbatim when it is modified after the anchor.
     let repo = init_repo();
     let weird = "a -> b.txt";
     fs::write(repo.path().join(weird), "content\n").unwrap();
     git(repo.path(), &["add", "--", weird]);
     git(repo.path(), &["commit", "-q", "-m", "add weird"]);
 
-    aikit(repo.path())
-        .args(["batch", "start"])
-        .assert()
-        .success();
-    let anchor = find_anchor(repo.path());
-
-    git(repo.path(), &["mv", "--", weird, "plain.txt"]);
+    let anchor = anchor_then_wait(repo.path());
+    fs::write(repo.path().join(weird), "content\nmore\n").unwrap();
 
     let json = changed_json(repo.path(), &anchor, &[]);
-    let files = json["files"].as_array().unwrap();
-    let old = files
+    let entry = json["files"]
+        .as_array()
+        .unwrap()
         .iter()
         .find(|f| f["path"] == weird)
-        .expect("original path with arrow reported intact as deleted");
-    let new = files
-        .iter()
-        .find(|f| f["path"] == "plain.txt")
-        .expect("renamed-to path reported as created");
-    assert_eq!(old["status"], "deleted");
-    assert_eq!(new["status"], "created");
+        .expect("path with an arrow reported intact");
+    assert_eq!(entry["status"], "modified");
+    assert_eq!(entry["source"], "anchor_mtime");
 }
 
 #[test]
@@ -599,7 +570,6 @@ fn batch_changed_rejects_invalid_anchor_schema() {
         "repo_root": repo.path().to_str().unwrap(),
         "git_head": "",
         "git_branch": "main",
-        "git_status_porcelain": "",
         "filesystem_anchor_time": "2026-06-12T00:00:00Z"
     });
     fs::write(&anchor_path, serde_json::to_string_pretty(&bad).unwrap()).unwrap();
@@ -629,7 +599,6 @@ fn batch_changed_rejects_invalid_anchor_timestamp() {
         "repo_root": repo.path().to_str().unwrap(),
         "git_head": "",
         "git_branch": "main",
-        "git_status_porcelain": "",
         "filesystem_anchor_time": "not-a-timestamp"
     });
     fs::write(&anchor_path, serde_json::to_string_pretty(&bad).unwrap()).unwrap();
@@ -661,14 +630,14 @@ fn batch_changed_untracked_older_than_anchor_is_excluded() {
         .success();
     let anchor = find_anchor(repo.path());
 
-    let json = changed_json(repo.path(), &anchor, &["--include-untracked"]);
+    let json = changed_json(repo.path(), &anchor, &[]);
     assert!(
         json["files"]
             .as_array()
             .unwrap()
             .iter()
             .all(|f| f["path"] != "preexisting.txt"),
-        "untracked file older than the anchor must be excluded by the mtime heuristic"
+        "a file older than the anchor must be excluded by the timestamp heuristic"
     );
 }
 
@@ -684,7 +653,7 @@ fn batch_changed_mtime_results_include_limitation_note() {
     std::thread::sleep(std::time::Duration::from_millis(1100));
     fs::write(repo.path().join("fresh.txt"), "fresh\n").unwrap();
 
-    let json = changed_json(repo.path(), &anchor, &["--include-untracked"]);
+    let json = changed_json(repo.path(), &anchor, &[]);
     let notes = json["notes"]
         .as_array()
         .expect("notes present for mtime results");
@@ -709,7 +678,6 @@ fn make_anchor(repo: &Path, id: &str, head: &str) {
         "repo_root": repo.to_str().unwrap(),
         "git_head": head,
         "git_branch": "main",
-        "git_status_porcelain": "",
         "filesystem_anchor_time": "2026-01-01T00:00:00Z",
     });
     fs::write(
@@ -872,7 +840,7 @@ fn batch_show_rejects_foreign_repo_anchor() {
     let body = serde_json::json!({
         "schema_version": 1, "kind": "aikit.batch_anchor", "anchor_id": "foreign",
         "created_at": "2026-01-01T00:00:00Z", "repo_root": other.path().to_str().unwrap(),
-        "git_head": "deadbee", "git_branch": "main", "git_status_porcelain": "",
+        "git_head": "deadbee", "git_branch": "main",
         "filesystem_anchor_time": "2026-01-01T00:00:00Z",
     });
     fs::write(dir.join("foreign.json"), body.to_string()).unwrap();
@@ -935,7 +903,7 @@ fn symlinked_batches_dir_is_not_followed() {
     let body = serde_json::json!({
         "schema_version": 1, "kind": "aikit.batch_anchor", "anchor_id": "sym1",
         "created_at": "2026-01-01T00:00:00Z", "repo_root": repo.path().to_str().unwrap(),
-        "git_head": "deadbee", "git_branch": "main", "git_status_porcelain": "",
+        "git_head": "deadbee", "git_branch": "main",
         "filesystem_anchor_time": "2026-01-01T00:00:00Z",
     });
     fs::write(real_dir.join("sym1.json"), body.to_string()).unwrap();
@@ -962,7 +930,7 @@ fn batch_list_skips_anchor_with_invalid_timestamp() {
     let body = serde_json::json!({
         "schema_version": 1, "kind": "aikit.batch_anchor", "anchor_id": "badts",
         "created_at": "not-a-time", "repo_root": repo.path().to_str().unwrap(),
-        "git_head": "deadbee", "git_branch": "main", "git_status_porcelain": "",
+        "git_head": "deadbee", "git_branch": "main",
         "filesystem_anchor_time": "not-a-time",
     });
     fs::write(dir.join("badts.json"), body.to_string()).unwrap();
@@ -972,4 +940,75 @@ fn batch_list_skips_anchor_with_invalid_timestamp() {
     assert_eq!(anchors.len(), 1);
     assert_eq!(anchors[0]["anchor_id"], "good1");
     assert!(json["counts"]["skipped"].as_u64().unwrap() >= 1);
+}
+
+// ---- anchor metadata: aikit version + optional initial snapshot ----
+
+#[test]
+fn batch_start_records_aikit_version() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args(["batch", "start"])
+        .assert()
+        .success();
+    let anchor_path = find_anchor(repo.path());
+    let json: Value = serde_json::from_str(&fs::read_to_string(&anchor_path).unwrap()).unwrap();
+    let version = json["aikit_version"]
+        .as_str()
+        .expect("aikit_version recorded");
+    assert!(!version.is_empty(), "aikit_version must be non-empty");
+    // No snapshot unless requested.
+    assert!(
+        json.get("initial_snapshot").is_none(),
+        "initial_snapshot must be absent without --snapshot"
+    );
+}
+
+#[test]
+fn batch_start_snapshot_records_tracked_files() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args(["batch", "start", "--snapshot"])
+        .assert()
+        .success();
+    let anchor_path = find_anchor(repo.path());
+    let json: Value = serde_json::from_str(&fs::read_to_string(&anchor_path).unwrap()).unwrap();
+    let snapshot = json["initial_snapshot"]
+        .as_array()
+        .expect("initial_snapshot present with --snapshot");
+    let names: Vec<String> = snapshot
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        names.contains(&"README.md".to_string()),
+        "snapshot lists tracked files: {names:?}"
+    );
+}
+
+#[test]
+fn batch_show_reports_aikit_version_field() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args(["batch", "start"])
+        .assert()
+        .success();
+    let anchor_path = find_anchor(repo.path());
+    let id = anchor_path
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let out = aikit(repo.path())
+        .args(["batch", "show", &id, "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&out).unwrap();
+    assert!(
+        json["anchor"].get("aikit_version").is_some(),
+        "batch show anchor view exposes aikit_version"
+    );
 }

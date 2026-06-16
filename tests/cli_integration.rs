@@ -97,7 +97,10 @@ fn local_workflow_end_to_end() {
         "default anchor path is under .aikit/outputs/batches/: {anchor_path}"
     );
 
-    // 2. Do some work: modify a tracked file (detected via git status, not mtime).
+    // 2. Do some work: modify a tracked file after the anchor (detected by filesystem
+    //    mtime newer than the anchor, not by git status). Pause first so the edit is
+    //    strictly newer than the anchor file on any filesystem.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     fs::write(p.join("README.md"), "initial\nmore work\n").unwrap();
 
     // 3. List what changed since the anchor.
@@ -105,7 +108,7 @@ fn local_workflow_end_to_end() {
     assert_eq!(changed["kind"], "aikit.batch_changed");
     let readme = files_contains(&changed, "README.md").expect("README.md reported as changed");
     assert_eq!(readme["status"], "modified");
-    assert_eq!(readme["source"], "git_status");
+    assert_eq!(readme["source"], "anchor_mtime");
 
     // 4. Inventory the repo. README.md is tracked and not ignored, so it appears.
     let inventory = aikit_json(p, &["inventory", "repo"]);

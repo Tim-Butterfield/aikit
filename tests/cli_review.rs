@@ -86,6 +86,9 @@ fn find_review_dir(repo: &Path) -> PathBuf {
 }
 
 /// Run `aikit batch start` and return the repo-relative path of the created anchor.
+/// Anchor discovery is timestamp-based against the anchor file's mtime, so we pause
+/// afterward to guarantee any subsequent edits have a strictly newer mtime on any
+/// filesystem; files committed before the anchor stay older and are excluded.
 fn make_anchor(repo: &Path) -> String {
     aikit(repo).args(["batch", "start"]).assert().success();
     let batches = repo.join(".aikit/outputs/batches");
@@ -94,6 +97,7 @@ fn make_anchor(repo: &Path) -> String {
         .next()
         .expect("an anchor file")
         .expect("dir entry");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     format!(
         ".aikit/outputs/batches/{}",
         entry.file_name().to_string_lossy()
@@ -716,24 +720,27 @@ fn anchor_mode_respects_per_file_caps() {
 }
 
 #[test]
-fn anchor_mode_includes_renamed_destination() {
+fn anchor_mode_includes_rename_destination_modified_after_anchor() {
     let repo = init_repo();
     fs::write(repo.path().join("old.txt"), "content\n").unwrap();
     git(repo.path(), &["add", "old.txt"]);
     git(repo.path(), &["commit", "-q", "-m", "add old"]);
 
     let anchor = make_anchor(repo.path());
+    // A pure `git mv` preserves mtime, so a rename alone is not detected by the
+    // timestamp model; writing new content after the anchor makes new.txt newer.
     git(repo.path(), &["mv", "old.txt", "new.txt"]);
+    fs::write(repo.path().join("new.txt"), "content\nmore\n").unwrap();
 
     let json = anchor_review_json(repo.path(), &anchor, &[]);
     let paths = paths_of(&json);
     assert!(
         paths.contains(&"new.txt".to_string()),
-        "rename destination included"
+        "destination modified after the anchor is included"
     );
     assert!(
         !paths.contains(&"old.txt".to_string()),
-        "renamed-from path not bundled"
+        "the deleted source path is not bundled"
     );
 }
 
@@ -776,7 +783,7 @@ fn anchor_mode_excludes_deleted_tracked_file() {
 }
 
 #[test]
-fn anchor_mode_excludes_untracked_file() {
+fn anchor_mode_includes_untracked_file_modified_after_anchor() {
     let repo = init_repo();
     let anchor = make_anchor(repo.path());
     fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
@@ -786,12 +793,47 @@ fn anchor_mode_excludes_untracked_file() {
     let paths = paths_of(&json);
     assert!(
         paths.contains(&"README.md".to_string()),
-        "tracked change included"
+        "tracked change after the anchor included"
+    );
+    // Timestamp-based discovery includes any non-ignored file modified after the anchor,
+    // regardless of tracked/untracked status.
+    assert!(
+        paths.contains(&"untracked.txt".to_string()),
+        "untracked file modified after the anchor is included"
+    );
+}
+
+#[test]
+fn anchor_mode_excludes_files_dirty_before_anchor_includes_after() {
+    let repo = init_repo();
+    // README is dirty relative to HEAD BEFORE the anchor is created (tree is dirty).
+    fs::write(repo.path().join("README.md"), "# readme\npre-anchor edit\n").unwrap();
+
+    // Anchor mode must not require a clean tree, and must not include README just
+    // because it is dirty vs HEAD — its mtime is older than the anchor.
+    let anchor = make_anchor(repo.path());
+
+    // A different file is modified AFTER the anchor.
+    fs::write(repo.path().join("src/main.rs"), "fn main() {}\n// after\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    let paths = paths_of(&json);
+    assert!(
+        paths.contains(&"src/main.rs".to_string()),
+        "file modified after the anchor is included: {paths:?}"
     );
     assert!(
-        !paths.contains(&"untracked.txt".to_string()),
-        "untracked file excluded from anchor-driven review"
+        !paths.contains(&"README.md".to_string()),
+        "file dirty vs HEAD but last modified before the anchor is excluded: {paths:?}"
     );
+    // Detection source is timestamp-based, never git_status.
+    let f = json["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "src/main.rs")
+        .unwrap();
+    assert_eq!(f["source"], "anchor_mtime");
 }
 
 #[test]
@@ -814,4 +856,502 @@ fn anchor_mode_respects_total_byte_cap() {
     assert_eq!(z["included"], false, "later file omitted by total cap");
     assert_eq!(z["omitted_reason"], "max_total_bytes");
     assert_eq!(z["cap_hit"], "total_bytes");
+}
+
+// ---- single-file / embedded-manifest output ----
+
+/// Write a config file (`aikit.config.json` or `.aikit/config.json`) under the repo.
+fn write_config(repo: &Path, rel: &str, value: &Value) {
+    let p = repo.join(rel);
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    fs::write(p, serde_json::to_string_pretty(value).unwrap()).unwrap();
+}
+
+/// Craft a valid batch anchor whose filesystem time is well in the past, so files
+/// created during the test reliably have a newer mtime (no sleeps needed).
+fn write_past_anchor(repo: &Path) -> String {
+    // Locally ignore aikit's own working areas (as `aikit repo init` would) so the
+    // anchor file and any bundle output do not surface as untracked during discovery.
+    let exclude = repo.join(".git/info/exclude");
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    fs::write(&exclude, "/.aikit/\n/tmp/\n").unwrap();
+
+    let batches = repo.join(".aikit/outputs/batches");
+    fs::create_dir_all(&batches).unwrap();
+    let root = fs::canonicalize(repo).unwrap();
+    let anchor = serde_json::json!({
+        "schema_version": 1,
+        "kind": "aikit.batch_anchor",
+        "anchor_id": "20200101-000000-testanc",
+        "created_at": "2020-01-01T00:00:00Z",
+        "repo_root": root.to_str().unwrap(),
+        "git_head": "",
+        "git_branch": "main",
+        "filesystem_anchor_time": "2020-01-01T00:00:00Z"
+    });
+    let path = batches.join("past-anchor.json");
+    fs::write(&path, serde_json::to_string_pretty(&anchor).unwrap()).unwrap();
+    // The reference is the anchor file's mtime; pause so later test edits are strictly
+    // newer. Files written by init_repo (before this) stay older and are excluded.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    ".aikit/outputs/batches/past-anchor.json".to_string()
+}
+
+#[test]
+fn single_file_writes_one_file_no_dir_no_sidecar() {
+    let repo = init_repo();
+    let json = review_json(repo.path(), &["README.md"], &["--single-file"]);
+
+    let bundle = repo.path().join("tmp/review_bundle.txt");
+    assert!(bundle.is_file(), "single bundle file written under tmp/");
+    // No review directory and no sidecar manifest.json anywhere.
+    assert!(
+        !repo.path().join(".aikit/outputs/reviews").exists(),
+        "single-file mode must not create a review directory"
+    );
+    assert!(
+        !repo.path().join("tmp/manifest.json").exists(),
+        "single-file mode must not write a sidecar manifest.json"
+    );
+
+    let body = fs::read_to_string(&bundle).unwrap();
+    assert!(body.contains("## Manifest"), "manifest embedded in bundle");
+    assert!(body.contains("## Files"), "file sections present");
+    assert!(body.contains("### README.md"), "README section present");
+    assert!(body.contains("# readme"), "README content embedded");
+
+    assert_eq!(json["embedded_manifest"], true);
+    assert_eq!(json["sidecar_manifest"], false);
+    assert_eq!(json["bundle_path"], "tmp/review_bundle.txt");
+    let written: Vec<String> = json["written"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(written, vec!["tmp/review_bundle.txt".to_string()]);
+}
+
+#[test]
+fn single_file_custom_output_path_is_honored() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args([
+            "review",
+            "generate",
+            "--files",
+            "README.md",
+            "--single-file",
+            "--output",
+            "tmp/sub/custom-bundle.txt",
+        ])
+        .assert()
+        .success();
+    assert!(
+        repo.path().join("tmp/sub/custom-bundle.txt").is_file(),
+        "custom single-file output path honored"
+    );
+    assert!(!repo.path().join(".aikit/outputs/reviews").exists());
+}
+
+#[test]
+fn single_file_output_escape_is_rejected() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args([
+            "review",
+            "generate",
+            "--files",
+            "README.md",
+            "--single-file",
+            "--output",
+            "../escape.txt",
+        ])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_path_escape"));
+}
+
+#[test]
+fn embed_manifest_in_directory_mode_keeps_sidecar() {
+    let repo = init_repo();
+    let json = review_json(repo.path(), &["README.md"], &["--embed-manifest"]);
+    let dir = find_review_dir(repo.path());
+    let bundle = fs::read_to_string(dir.join("review_bundle.txt")).unwrap();
+    assert!(bundle.contains("## Manifest"), "manifest embedded");
+    assert!(
+        dir.join("manifest.json").is_file(),
+        "sidecar manifest.json still written in directory mode"
+    );
+    assert_eq!(json["embedded_manifest"], true);
+    assert_eq!(json["sidecar_manifest"], true);
+}
+
+#[test]
+fn no_sidecar_manifest_suppresses_sidecar() {
+    let repo = init_repo();
+    let json = review_json(repo.path(), &["README.md"], &["--no-sidecar-manifest"]);
+    let dir = find_review_dir(repo.path());
+    assert!(dir.join("review_bundle.txt").is_file());
+    assert!(
+        !dir.join("manifest.json").exists(),
+        "--no-sidecar-manifest must suppress the sidecar"
+    );
+    assert_eq!(json["sidecar_manifest"], false);
+}
+
+// ---- config loading and precedence ----
+
+#[test]
+fn config_single_file_default_is_applied() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        "aikit.config.json",
+        &serde_json::json!({ "bundle": { "single_file": true } }),
+    );
+    aikit(repo.path())
+        .args(["review", "generate", "--files", "README.md"])
+        .assert()
+        .success();
+    assert!(
+        repo.path().join("tmp/review_bundle.txt").is_file(),
+        "config single_file=true produces a single-file bundle without a CLI flag"
+    );
+    assert!(!repo.path().join(".aikit/outputs/reviews").exists());
+}
+
+#[test]
+fn config_dotaikit_overrides_repo_root_config() {
+    let repo = init_repo();
+    // Lower-precedence file disables single-file; higher-precedence file enables it.
+    write_config(
+        repo.path(),
+        "aikit.config.json",
+        &serde_json::json!({ "bundle": { "single_file": false } }),
+    );
+    write_config(
+        repo.path(),
+        ".aikit/config.json",
+        &serde_json::json!({ "bundle": { "single_file": true } }),
+    );
+    aikit(repo.path())
+        .args(["review", "generate", "--files", "README.md"])
+        .assert()
+        .success();
+    assert!(
+        repo.path().join("tmp/review_bundle.txt").is_file(),
+        ".aikit/config.json takes precedence over aikit.config.json"
+    );
+}
+
+#[test]
+fn cli_flag_overrides_config_for_single_file() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        ".aikit/config.json",
+        &serde_json::json!({ "bundle": { "single_file": false } }),
+    );
+    aikit(repo.path())
+        .args([
+            "review",
+            "generate",
+            "--files",
+            "README.md",
+            "--single-file",
+        ])
+        .assert()
+        .success();
+    assert!(
+        repo.path().join("tmp/review_bundle.txt").is_file(),
+        "CLI --single-file overrides config single_file=false"
+    );
+}
+
+#[test]
+fn invalid_config_fails_clearly() {
+    let repo = init_repo();
+    fs::write(repo.path().join("aikit.config.json"), "{ not valid json").unwrap();
+    aikit(repo.path())
+        .args(["review", "generate", "--files", "README.md"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "invalid config aikit.config.json",
+        ));
+}
+
+#[test]
+fn example_config_can_be_copied_verbatim() {
+    let repo = init_repo();
+    // The annotated example (with `_comment` keys) must load without error when copied
+    // straight into aikit.config.json.
+    let example =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("aikit.config.example.json"))
+            .unwrap();
+    fs::write(repo.path().join("aikit.config.json"), example).unwrap();
+    aikit(repo.path())
+        .args(["review", "generate", "--files", "README.md", "--json"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn unknown_config_field_is_rejected() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        "aikit.config.json",
+        &serde_json::json!({ "bundle": { "nope": true } }),
+    );
+    aikit(repo.path())
+        .args(["review", "generate", "--files", "README.md"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("invalid config"));
+}
+
+// ---- enhanced anchor discovery ----
+
+#[test]
+fn enhanced_discovery_includes_tracked_change_after_anchor() {
+    let repo = init_repo();
+    let anchor = write_past_anchor(repo.path());
+    fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &["--include-ignored-batch-files"]);
+    let f = json["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "README.md")
+        .expect("tracked change present in enhanced mode");
+    assert_eq!(f["included"], true);
+    // Timestamp-based detection source, never `git_status`.
+    assert_eq!(f["source"], "anchor_mtime");
+    assert_eq!(json["inputs"]["enhanced_discovery"], true);
+}
+
+#[test]
+fn enhanced_discovery_includes_untracked_non_ignored() {
+    let repo = init_repo();
+    let anchor = write_past_anchor(repo.path());
+    fs::write(repo.path().join("untracked.txt"), "new\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &["--include-ignored-batch-files"]);
+    let f = json["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "untracked.txt")
+        .expect("untracked non-ignored file included in enhanced mode");
+    assert_eq!(f["source"], "anchor_mtime");
+}
+
+#[test]
+fn enhanced_discovery_includes_allowed_ignored_excludes_others() {
+    let repo = init_repo();
+    // Ignore the artifacts tree so its files are git-ignored (not merely untracked).
+    fs::write(repo.path().join(".gitignore"), "data/\n").unwrap();
+    git(repo.path(), &["add", ".gitignore"]);
+    git(repo.path(), &["commit", "-q", "-m", "ignore data"]);
+
+    // Allowlist data/**, but exclude the data/skip subtree.
+    write_config(
+        repo.path(),
+        ".aikit/config.json",
+        &serde_json::json!({
+            "discovery": {
+                "include_ignored_batch_files": true,
+                "include_globs": ["data/**"],
+                "exclude_globs": ["data/skip/**"]
+            }
+        }),
+    );
+    let anchor = write_past_anchor(repo.path());
+    fs::create_dir_all(repo.path().join("data/skip")).unwrap();
+    fs::write(repo.path().join("data/keep.json"), "{\"k\":1}\n").unwrap();
+    fs::write(repo.path().join("data/skip/no.json"), "{\"n\":1}\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    let paths = paths_of(&json);
+    assert!(
+        paths.contains(&"data/keep.json".to_string()),
+        "allowlisted ignored file included: {paths:?}"
+    );
+    assert!(
+        !paths.contains(&"data/skip/no.json".to_string()),
+        "excluded ignored file must not be included: {paths:?}"
+    );
+    let keep = json["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "data/keep.json")
+        .unwrap();
+    assert_eq!(keep["source"], "anchor_mtime");
+}
+
+#[test]
+fn enhanced_discovery_default_excludes_protect_node_modules() {
+    let repo = init_repo();
+    fs::write(repo.path().join(".gitignore"), "node_modules/\n").unwrap();
+    git(repo.path(), &["add", ".gitignore"]);
+    git(repo.path(), &["commit", "-q", "-m", "ignore nm"]);
+
+    write_config(
+        repo.path(),
+        ".aikit/config.json",
+        &serde_json::json!({
+            "discovery": {
+                "include_ignored_batch_files": true,
+                "include_globs": ["**/*.json"]
+            }
+        }),
+    );
+    let anchor = write_past_anchor(repo.path());
+    fs::create_dir_all(repo.path().join("node_modules/pkg")).unwrap();
+    fs::write(repo.path().join("node_modules/pkg/p.json"), "{}\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    assert!(
+        !paths_of(&json).contains(&"node_modules/pkg/p.json".to_string()),
+        "default protective excludes keep node_modules/** out of the bundle"
+    );
+}
+
+#[test]
+fn anchor_mode_deleted_file_is_not_a_bundle_entry() {
+    let repo = init_repo();
+    fs::write(repo.path().join("del.txt"), "bye\n").unwrap();
+    git(repo.path(), &["add", "del.txt"]);
+    git(repo.path(), &["commit", "-q", "-m", "add del"]);
+
+    let anchor = make_anchor(repo.path());
+    fs::remove_file(repo.path().join("del.txt")).unwrap();
+
+    // Deleted files are out of scope for timestamp-anchor bundling (no content exists),
+    // so del.txt must not appear in the manifest at all.
+    let json = anchor_review_json(repo.path(), &anchor, &["--include-ignored-batch-files"]);
+    assert!(
+        !paths_of(&json).contains(&"del.txt".to_string()),
+        "a deleted file must not be a bundle entry"
+    );
+    assert!(
+        json["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["path"] != "del.txt"),
+        "no deleted-file manifest entry should be invented"
+    );
+}
+
+#[test]
+fn legacy_anchor_mode_does_not_scan_ignored_files() {
+    let repo = init_repo();
+    fs::write(repo.path().join(".gitignore"), "data/\n").unwrap();
+    git(repo.path(), &["add", ".gitignore"]);
+    git(repo.path(), &["commit", "-q", "-m", "ignore data"]);
+    // Config provides include globs but does NOT enable enhanced discovery.
+    write_config(
+        repo.path(),
+        ".aikit/config.json",
+        &serde_json::json!({ "discovery": { "include_globs": ["data/**"] } }),
+    );
+    let anchor = write_past_anchor(repo.path());
+    fs::create_dir_all(repo.path().join("data")).unwrap();
+    fs::write(repo.path().join("data/keep.json"), "{}\n").unwrap();
+    fs::write(repo.path().join("README.md"), "# readme\nchanged\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    let paths = paths_of(&json);
+    assert!(
+        paths.contains(&"README.md".to_string()),
+        "legacy mode still bundles tracked changes"
+    );
+    assert!(
+        !paths.contains(&"data/keep.json".to_string()),
+        "legacy mode must not scan ignored files"
+    );
+    assert_eq!(json["inputs"]["enhanced_discovery"], false);
+}
+
+// ---- bundle-scope remediation ----
+
+#[test]
+fn manifest_records_aikit_version() {
+    let repo = init_repo();
+    let json = review_json(repo.path(), &["README.md"], &[]);
+    assert_eq!(json["aikit_version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[test]
+fn enhanced_discovery_excludes_nested_node_modules() {
+    let repo = init_repo();
+    // Ignore node_modules anywhere; the nested copy must still be protected by the
+    // **/node_modules/** default exclude even though it is not at the repo root.
+    fs::write(repo.path().join(".gitignore"), "node_modules/\ndata/\n").unwrap();
+    git(repo.path(), &["add", ".gitignore"]);
+    git(repo.path(), &["commit", "-q", "-m", "ignore"]);
+
+    write_config(
+        repo.path(),
+        ".aikit/config.json",
+        &serde_json::json!({
+            "discovery": {
+                "include_ignored_batch_files": true,
+                "include_globs": ["**/*.json"]
+            }
+        }),
+    );
+    let anchor = write_past_anchor(repo.path());
+    fs::create_dir_all(repo.path().join("pkg/node_modules/dep")).unwrap();
+    fs::write(repo.path().join("pkg/node_modules/dep/p.json"), "{}\n").unwrap();
+    fs::create_dir_all(repo.path().join("data")).unwrap();
+    fs::write(repo.path().join("data/keep.json"), "{}\n").unwrap();
+
+    let json = anchor_review_json(repo.path(), &anchor, &[]);
+    let paths = paths_of(&json);
+    assert!(
+        !paths.contains(&"pkg/node_modules/dep/p.json".to_string()),
+        "nested node_modules must be excluded: {paths:?}"
+    );
+    assert!(
+        paths.contains(&"data/keep.json".to_string()),
+        "non-excluded allowlisted file still included: {paths:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn single_file_output_cannot_escape_via_symlinked_parent() {
+    use std::os::unix::fs::symlink;
+    let repo = init_repo();
+    let outside = TempDir::new().unwrap();
+    // tmp -> /outside ; then --output tmp/review_bundle.txt would escape the repo.
+    symlink(outside.path(), repo.path().join("tmp")).unwrap();
+
+    aikit(repo.path())
+        .args([
+            "review",
+            "generate",
+            "--files",
+            "README.md",
+            "--single-file",
+            "--output",
+            "tmp/review_bundle.txt",
+        ])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_path_escape"));
+    assert!(
+        !outside.path().join("review_bundle.txt").exists(),
+        "no bundle should be written outside the repo"
+    );
 }

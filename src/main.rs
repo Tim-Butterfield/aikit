@@ -6,6 +6,7 @@
 
 mod batch;
 mod cli;
+mod config;
 mod diff;
 mod env;
 mod errors;
@@ -18,6 +19,7 @@ mod repo;
 mod review;
 mod scan;
 mod script;
+mod version;
 
 use clap::Parser;
 
@@ -72,5 +74,6 @@ fn run(cli: Cli) -> Result<(), AikitError> {
             ScriptCommand::Run(args) => script::run(args),
             ScriptCommand::Check(args) => script::check(args),
         },
+        Command::Version(args) => version::version(args),
     }
 }

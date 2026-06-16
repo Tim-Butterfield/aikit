@@ -2,10 +2,11 @@
 //!
 //! This is a mechanical guard, NOT a security sandbox. Both subcommands share one
 //! validation path: resolve the script under an allowed local work area
-//! (canonicalized; symlink escapes rejected), select the interpreter from the
-//! extension (never a shebang), run a best-effort forbidden-operation scan, and
+//! (canonicalized; symlink escapes rejected), detect the runner cross-OS (explicit
+//! `--runner`, config extension map, `#!` shebang, built-in extension map, OS-aware
+//! fallback — see `policy::script`), run a best-effort forbidden-operation scan, and
 //! apply the clean-tree policy. `script run` then either prints the plan (`--print`)
-//! or executes through the interpreter and records an audit trail (copied script,
+//! or executes through the detected runner and records an audit trail (copied script,
 //! stdout.txt, stderr.txt, run.json), propagating the script's exit code.
 //! `script check` stops after validation and writes nothing — it only reports whether
 //! the policy accepts the script.
@@ -21,9 +22,10 @@ use time::macros::format_description;
 use time::OffsetDateTime;
 
 use crate::cli::{ScriptCheckArgs, ScriptRunArgs};
+use crate::config;
 use crate::errors::{blocked, AikitError};
 use crate::formats::{ScriptCheck, ScriptRun, KIND_SCRIPT_CHECK, KIND_SCRIPT_RUN, SCHEMA_VERSION};
-use crate::policy::script as policy;
+use crate::policy::script::{self as policy, Detection};
 use crate::{output, repo};
 
 const TS_FORMAT: &[FormatItem<'static>] =
@@ -40,43 +42,42 @@ const SANDBOX_NOTE: &str =
 best-effort and easily bypassed; the allowed-location policy is the primary control. \
 Running a script here does not make it safe.";
 
-/// A script that passed location/extension resolution: its repo-relative path, real
-/// canonical path, and the interpreter chosen from its extension.
-struct Resolved {
+/// A script that passed path/location resolution: its repo-relative path and real
+/// canonical path. The runner is detected separately (it needs the script content).
+struct Located {
     root: PathBuf,
     rel: String,
     real: PathBuf,
-    interpreter: &'static str,
 }
 
-/// Phase 1 of the shared validation: detect the repo, resolve + canonicalize the
-/// script path, reject repo/allowlist escapes, and pick the interpreter from the
-/// extension. Does not read or scan the script content.
-fn resolve_and_locate(input: &str) -> Result<Resolved, AikitError> {
+/// Detect the repo, resolve + canonicalize the script path, and reject
+/// repo/allowlist escapes. Does not read content or pick a runner.
+fn resolve_and_locate(input: &str) -> Result<Located, AikitError> {
     let root = repo::detect_root()?;
     let root_canon = fs::canonicalize(&root)
         .map_err(|e| AikitError::other(format!("failed to resolve repo root: {e}")))?;
     let (rel, real) = resolve_script_path(&root_canon, input)?;
-    let interpreter = policy::interpreter_for(&rel)?;
-    Ok(Resolved {
-        root,
-        rel,
-        real,
-        interpreter,
+    Ok(Located { root, rel, real })
+}
+
+/// Read the located script's bytes, mapping failure to `blocked_unreadable_file`.
+fn read_script(located: &Located) -> Result<Vec<u8>, AikitError> {
+    fs::read(&located.real).map_err(|_| {
+        AikitError::blocked(
+            blocked::UNREADABLE_FILE,
+            format!("script could not be read: {}", located.rel),
+        )
     })
 }
 
-/// Phase 2 of the shared validation: read the script, run the best-effort
-/// forbidden-operation scan, and apply the clean-tree policy. Returns the script
-/// bytes on success (the caller computes a hash / copies as needed).
-fn scan_and_check_clean(resolved: &Resolved, require_clean: bool) -> Result<Vec<u8>, AikitError> {
-    let content = fs::read(&resolved.real).map_err(|_| {
-        AikitError::blocked(
-            blocked::UNREADABLE_FILE,
-            format!("script could not be read: {}", resolved.rel),
-        )
-    })?;
-    let content_str = String::from_utf8_lossy(&content);
+/// Best-effort forbidden-operation scan plus the clean-tree policy (both applied after
+/// runner detection so a `check` can still report the detected runner on a block).
+fn check_forbidden_and_clean(
+    content: &[u8],
+    located: &Located,
+    require_clean: bool,
+) -> Result<(), AikitError> {
+    let content_str = String::from_utf8_lossy(content);
     if let Some(pattern) = policy::scan_forbidden(&content_str) {
         return Err(AikitError::blocked(
             blocked::FORBIDDEN_OPERATION,
@@ -88,34 +89,52 @@ not a security check — refusing to run"
     }
     // Clean-tree policy. Default is allow-dirty; --require-clean blocks a dirty
     // tracked tree. (--require-clean / --allow-dirty are mutually exclusive in clap.)
-    if require_clean && repo::is_tracked_tree_dirty(&resolved.root) {
+    if require_clean && repo::is_tracked_tree_dirty(&located.root) {
         return Err(AikitError::blocked(
             blocked::DIRTY_TREE,
             "tracked working tree is dirty and --require-clean was given",
         ));
     }
-    Ok(content)
+    Ok(())
+}
+
+/// The full argv to run a script: program, runner flags, then the script path.
+fn build_argv(detection: &Detection, rel: &str) -> Vec<String> {
+    let mut argv = Vec::with_capacity(detection.argv_flags.len() + 2);
+    argv.push(detection.program.clone());
+    argv.extend(detection.argv_flags.iter().cloned());
+    argv.push(rel.to_string());
+    argv
 }
 
 /// `aikit script run <script-path>` — validate, then print the plan (`--print`) or
 /// execute and record an audit trail. The script's exit code is propagated.
 pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
-    let resolved = resolve_and_locate(&args.script)?;
-    let content = scan_and_check_clean(&resolved, args.require_clean)?;
+    let located = resolve_and_locate(&args.script)?;
+    let content = read_script(&located)?;
+    let cfg = config::load(&located.root)?;
+    let detection = policy::detect_runner(
+        &located.rel,
+        &String::from_utf8_lossy(&content),
+        &cfg.script_runner,
+        args.runner.as_deref(),
+        !args.no_shebang,
+    )?;
+    check_forbidden_and_clean(&content, &located, args.require_clean)?;
 
-    let Resolved {
-        root,
-        rel,
-        real,
-        interpreter,
-    } = resolved;
+    let Located { root, rel, real } = located;
 
     let script_sha256 = sha256_bytes(&content);
     let ext = Path::new(&rel)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    let script_copy_name = format!("script.{ext}");
+    let script_copy_name = if ext.is_empty() {
+        "script".to_string()
+    } else {
+        format!("script.{ext}")
+    };
+    let argv = build_argv(&detection, &rel);
 
     let now = OffsetDateTime::now_utc();
     let head = repo::git_head(&root);
@@ -126,7 +145,6 @@ pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
     // --print: validate (done above) and show the plan; do not execute. The planned
     // argv references the source script (no copy is made in print mode).
     if args.print {
-        let argv = vec![interpreter.to_string(), rel.clone()];
         let record = ScriptRun {
             schema_version: SCHEMA_VERSION,
             kind: KIND_SCRIPT_RUN.to_string(),
@@ -135,7 +153,11 @@ pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
             script_path: rel.clone(),
             script_sha256,
             script_copy_path: None,
-            interpreter: interpreter.to_string(),
+            interpreter: detection.program.clone(),
+            detected_runner: detection.runner.clone(),
+            detection_source: detection.source.clone(),
+            used_shebang: detection.used_shebang,
+            used_extension_map: detection.used_extension_map,
             argv,
             cwd,
             require_clean: args.require_clean,
@@ -155,7 +177,11 @@ pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
             print_json(&record)?;
         } else {
             println!("Would run (not executed; --print):");
-            println!("  {} {}", record.interpreter, rel);
+            println!("  {}", record.argv.join(" "));
+            println!(
+                "  runner: {} (source: {})",
+                record.detected_runner, record.detection_source
+            );
             println!("  cwd: {}", record.cwd);
             println!(
                 "  require_clean: {} (allow_dirty: {})",
@@ -188,14 +214,14 @@ pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
     // resolution works and the recorded argv matches exactly what ran. The copy in
     // the run directory is the immutable audit snapshot. stdin is /dev/null so an
     // accidental interactive prompt fails fast instead of hanging.
-    let argv = vec![interpreter.to_string(), rel.clone()];
     let exec_start = OffsetDateTime::now_utc();
-    let out = Command::new(interpreter)
+    let out = Command::new(&detection.program)
+        .args(&detection.argv_flags)
         .arg(&rel)
         .current_dir(&root)
         .stdin(std::process::Stdio::null())
         .output()
-        .map_err(|e| AikitError::other(format!("failed to execute {interpreter}: {e}")))?;
+        .map_err(|e| AikitError::other(format!("failed to execute {}: {e}", detection.program)))?;
     let finished = OffsetDateTime::now_utc();
     let duration_ms = (finished - exec_start).whole_milliseconds().max(0) as u64;
     let exit_code = exit_code_from_status(&out.status);
@@ -216,7 +242,11 @@ pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
         script_path: rel.clone(),
         script_sha256,
         script_copy_path: Some(script_copy_name),
-        interpreter: interpreter.to_string(),
+        interpreter: detection.program.clone(),
+        detected_runner: detection.runner.clone(),
+        detection_source: detection.source.clone(),
+        used_shebang: detection.used_shebang,
+        used_extension_map: detection.used_extension_map,
         argv,
         cwd,
         require_clean: args.require_clean,
@@ -277,34 +307,82 @@ pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
 pub fn check(args: ScriptCheckArgs) -> Result<(), AikitError> {
     let require_clean = args.require_clean;
 
-    let resolved = match resolve_and_locate(&args.script) {
-        Ok(r) => r,
+    // Tier 0: locate the script (repo, path, allowed location).
+    let located = match resolve_and_locate(&args.script) {
+        Ok(l) => l,
         Err(AikitError::Blocked { state, message }) => {
-            // Blocked before the interpreter/real path were known.
-            let record = build_check(
+            return emit_blocked_check(
                 None,
                 args.script.clone(),
                 None,
                 None,
+                None,
                 require_clean,
-                false,
-                Some(state.to_string()),
-                Some(message),
+                state,
+                message,
+                args.json,
             );
-            emit_check(&record, args.json);
-            std::io::stdout().flush().ok();
-            std::process::exit(3);
+        }
+        Err(other) => return Err(other),
+    };
+    let repo_root = Some(located.root.display().to_string());
+    let resolved = Some(display_relative(&located.root, &located.real));
+
+    // Read content (needed for shebang detection and the forbidden scan).
+    let content = match read_script(&located) {
+        Ok(c) => c,
+        Err(AikitError::Blocked { state, message }) => {
+            return emit_blocked_check(
+                repo_root,
+                located.rel.clone(),
+                resolved,
+                None,
+                None,
+                require_clean,
+                state,
+                message,
+                args.json,
+            );
         }
         Err(other) => return Err(other),
     };
 
-    match scan_and_check_clean(&resolved, require_clean) {
-        Ok(_) => {
+    let cfg = config::load(&located.root)?;
+    // Detect the runner.
+    let detection = match policy::detect_runner(
+        &located.rel,
+        &String::from_utf8_lossy(&content),
+        &cfg.script_runner,
+        args.runner.as_deref(),
+        !args.no_shebang,
+    ) {
+        Ok(d) => d,
+        Err(AikitError::Blocked { state, message }) => {
+            return emit_blocked_check(
+                repo_root,
+                located.rel.clone(),
+                resolved,
+                None,
+                None,
+                require_clean,
+                state,
+                message,
+                args.json,
+            );
+        }
+        Err(other) => return Err(other),
+    };
+    let argv = build_argv(&detection, &located.rel);
+
+    // Forbidden scan + clean-tree (detection metadata is reported either way).
+    match check_forbidden_and_clean(&content, &located, require_clean) {
+        Ok(()) => {
             let record = build_check(
-                Some(resolved.root.display().to_string()),
-                resolved.rel.clone(),
-                Some(display_relative(&resolved.root, &resolved.real)),
-                Some(resolved.interpreter.to_string()),
+                repo_root,
+                located.rel.clone(),
+                resolved,
+                Some(&detection),
+                Some(argv),
                 require_clean,
                 true,
                 None,
@@ -313,23 +391,48 @@ pub fn check(args: ScriptCheckArgs) -> Result<(), AikitError> {
             emit_check(&record, args.json);
             Ok(())
         }
-        Err(AikitError::Blocked { state, message }) => {
-            let record = build_check(
-                Some(resolved.root.display().to_string()),
-                resolved.rel.clone(),
-                Some(display_relative(&resolved.root, &resolved.real)),
-                Some(resolved.interpreter.to_string()),
-                require_clean,
-                false,
-                Some(state.to_string()),
-                Some(message),
-            );
-            emit_check(&record, args.json);
-            std::io::stdout().flush().ok();
-            std::process::exit(3);
-        }
+        Err(AikitError::Blocked { state, message }) => emit_blocked_check(
+            repo_root,
+            located.rel.clone(),
+            resolved,
+            Some(&detection),
+            Some(argv),
+            require_clean,
+            state,
+            message,
+            args.json,
+        ),
         Err(other) => Err(other),
     }
+}
+
+/// Emit a blocked `script check` record and exit 3.
+#[allow(clippy::too_many_arguments)]
+fn emit_blocked_check(
+    repo_root: Option<String>,
+    script_path: String,
+    resolved_script_path: Option<String>,
+    detection: Option<&Detection>,
+    argv: Option<Vec<String>>,
+    require_clean: bool,
+    state: &'static str,
+    message: String,
+    json: bool,
+) -> Result<(), AikitError> {
+    let record = build_check(
+        repo_root,
+        script_path,
+        resolved_script_path,
+        detection,
+        argv,
+        require_clean,
+        false,
+        Some(state.to_string()),
+        Some(message),
+    );
+    emit_check(&record, json);
+    std::io::stdout().flush().ok();
+    std::process::exit(3);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -337,7 +440,8 @@ fn build_check(
     repo_root: Option<String>,
     script_path: String,
     resolved_script_path: Option<String>,
-    interpreter: Option<String>,
+    detection: Option<&Detection>,
+    argv: Option<Vec<String>>,
     require_clean: bool,
     accepted: bool,
     blocked_state: Option<String>,
@@ -349,7 +453,12 @@ fn build_check(
         repo_root,
         script_path,
         resolved_script_path,
-        interpreter,
+        interpreter: detection.map(|d| d.program.clone()),
+        detected_runner: detection.map(|d| d.runner.clone()),
+        detection_source: detection.map(|d| d.source.clone()),
+        used_shebang: detection.map(|d| d.used_shebang).unwrap_or(false),
+        used_extension_map: detection.map(|d| d.used_extension_map).unwrap_or(false),
+        argv,
         require_clean,
         allow_dirty: !require_clean,
         executed: false,
@@ -378,9 +487,15 @@ fn emit_check(record: &ScriptCheck, json: bool) {
     if let Some(resolved) = &record.resolved_script_path {
         println!("  resolved: {resolved}");
     }
-    match &record.interpreter {
-        Some(i) => println!("  interpreter: {i}"),
-        None => println!("  interpreter: (not resolved)"),
+    match (&record.detected_runner, &record.interpreter) {
+        (Some(runner), Some(interp)) => {
+            let source = record.detection_source.as_deref().unwrap_or("?");
+            println!("  runner: {runner} ({interp}) [source: {source}]");
+        }
+        _ => println!("  runner: (not resolved)"),
+    }
+    if let Some(argv) = &record.argv {
+        println!("  argv: {}", argv.join(" "));
     }
     println!(
         "  require_clean: {} (allow_dirty: {})",

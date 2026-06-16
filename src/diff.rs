@@ -4,7 +4,7 @@
 //! This is inspection only: it never advances workflow state, never creates a review
 //! bundle or output artifact, and never touches remotes. Git is the source of truth for
 //! the diff. Untracked file *contents* are not part of a `git diff` and are therefore not
-//! included here (callers wanting that view use `batch changed --include-untracked`).
+//! included here (callers wanting a timestamp-based file list use `batch changed --anchor`).
 
 use std::fs;
 
@@ -24,7 +24,7 @@ const TS_FORMAT: &[FormatItem<'static>] =
     format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
 
 const UNTRACKED_NOTE: &str = "Untracked file contents are not part of the Git diff. Use \
-`aikit batch changed --include-untracked` to view untracked files.";
+`aikit batch changed --anchor <anchor>` for a timestamp-based list of changed files.";
 
 /// `aikit diff anchor` — diff the anchor's recorded `git_head` against the current
 /// working tree.

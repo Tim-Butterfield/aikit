@@ -158,11 +158,10 @@ The smallest useful set of external integrations to build first:
 
 ## Example: Change Reporting Wrapper
 
-- **Problem solved:** report which files were created or modified since an
-  explicit anchor, and optionally show a mechanical diff.
+- **Problem solved:** report which files were modified since an explicit anchor
+  (timestamp-based), and optionally show a mechanical diff.
 - **Basis commands:** `aikit batch changed --anchor <anchor> --json` (optionally
-  `--include-untracked` and `--hash`); `aikit diff anchor <anchor> --json`
-  (stat-oriented by default).
+  `--hash`); `aikit diff anchor <anchor> --json` (stat-oriented by default).
 - **Inputs:** an **explicit** anchor path or id (from the Task Anchor Wrapper).
 - **Output to preserve:** the file list, per-source counts, sizes, hashes (when
   `--hash`), and for `diff anchor` the base/current heads, name-status list, and
@@ -231,15 +230,23 @@ The smallest useful set of external integrations to build first:
 - **Basis commands:** `aikit script check <script> --json` **always first**, then
   `aikit script run <script> --json` only after explicit approval.
 - **Inputs:** a script under an allowed input location (`.aikit/temp/`,
-  `.scratch/work/temp/`, or `.scratch/work/outputs/`), with a `.sh` or `.zsh`
-  extension (interpreter is chosen by extension, never by shebang). Optional
-  `--require-clean` / `--allow-dirty`.
-- **Output to preserve:** for `check`, `accepted` / `blocked_state`. For `run`,
-  the run directory and its `written` paths (copied script, `stdout.txt`,
-  `stderr.txt`, `run.json`), the interpreter, and the propagated exit code.
-- **Blocked states to surface:** `blocked_script_not_allowed` (disallowed
-  location/extension), `blocked_path_escape`, and `blocked_dirty_tree` (under
-  `--require-clean`).
+  `.scratch/work/temp/`, or `.scratch/work/outputs/`). The runner is **detected**
+  cross-OS, not fixed: supported extensions are `.sh`, `.zsh`, `.ps1`, `.cmd`, `.bat`,
+  `.py`, `.js`, and detection order is explicit `--runner` → config
+  `script_runner.extension_map` → recognized shebang (unless disabled) → built-in
+  extension map → OS-aware fallback. On Windows, `.ps1` uses `pwsh`/`powershell` and
+  `.cmd`/`.bat` use `cmd` (no Git Bash required). Optional `--require-clean` /
+  `--allow-dirty`.
+- **Output to preserve:** for `check`, `accepted` / `blocked_state` plus the runner
+  metadata (`detected_runner`, `detection_source`, `used_shebang`, `used_extension_map`,
+  resolved interpreter, `argv`). For `run`, the run directory and its `written` paths
+  (copied script, `stdout.txt`, `stderr.txt`, `run.json` with the same runner metadata)
+  and the propagated exit code.
+- **Blocked states to surface:** `blocked_script_not_allowed` (disallowed location),
+  `blocked_unknown_script_type` (unknown extension/no runner signal),
+  `blocked_runner_not_found` (selected runner unavailable on this OS),
+  `blocked_runner_not_allowed` (unknown `--runner` name), `blocked_path_escape`, and
+  `blocked_dirty_tree` (under `--require-clean`).
 - **Safety boundary:** `script run` is **not a security sandbox**; once execution
   starts the script can touch any path. The wrapper — not `aikit` — is responsible
   for keeping the script within the intended repository-local boundary. Do not

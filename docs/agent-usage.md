@@ -142,8 +142,7 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
 
 ### `aikit batch start`
 
-- **Purpose:** capture a point-in-time anchor (Git HEAD, branch, status, timestamp)
-  before a unit of work begins.
+- **Purpose:** create a minimal timestamp-reference anchor before a unit of work begins.
 - **Typical use:** mark the start of an agent task so later steps can report what the
   task touched.
 - **Constraints:** must be run inside a Git repository, else `blocked_repo_not_found`.
@@ -172,8 +171,9 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
   anchor's recorded `git_head` as the diff base (must still exist locally, else blocked).
   Reports committed changes since the anchor and current tracked working-tree changes.
   **Untracked file contents are not part of the Git diff** — use
-  `batch changed --include-untracked` for that. Inspection only: it creates no review
-  bundle or output artifact, advances no workflow state, and never touches remotes.
+  `batch changed --anchor <anchor>` for a timestamp-based file list. Inspection only: it
+  creates no review bundle or output artifact, advances no workflow state, and never
+  touches remotes.
 - **Output:** `aikit.diff_anchor` (anchor metadata, base/current head, name-status files,
   counts, stat, notes). `--stat` (default), `--patch`, and `--json` supported.
 
@@ -220,12 +220,14 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
 
 ### `aikit batch changed --anchor <anchor.json>`
 
-- **Purpose:** report files created or modified since a given anchor.
+- **Purpose:** report existing files modified since a given anchor.
 - **Typical use:** after doing work, list the change set for review or reporting.
 - **Constraints:** the anchor must exist, be a valid anchor, and belong to this repo
-  (else a `blocked_*` state). Tracked changes come from `git status`; untracked files
-  are included only with `--include-untracked` (a best-effort mtime heuristic);
-  deletions are detected for tracked files only.
+  (else a `blocked_*` state). Discovery is **timestamp-based** (filesystem mtime newer
+  than the anchor file), not `git status`: it includes existing non-ignored files
+  modified after the anchor whether tracked or untracked, and excludes files merely dirty
+  vs `HEAD` but older than the anchor. Deleted files are out of scope. A clean tree is not
+  required.
 - **Output:** printed report; `--json` for the machine-readable report; `--hash` adds a
   SHA-256 per existing file. This command reads state and writes no artifact directory.
 
@@ -267,8 +269,8 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
 
 ### `aikit script run <script-path>`
 
-- **Purpose:** run a constrained local script through a fixed interpreter and record an
-  audit trail.
+- **Purpose:** run a constrained local script through its **detected runner** and record
+  an audit trail.
 - **Typical use:** execute a small, repo-local helper script with a recorded run record.
 - **Constraints:** see [Script Runner Use](#script-runner-use). This is **not** a
   security sandbox.
@@ -281,7 +283,7 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
 - **Purpose:** validate a script against the same policy `script run` uses, without
   executing it.
 - **Typical use:** confirm a generated script will be accepted (allowed location,
-  path/symlink boundary, extension/interpreter, forbidden-operation scan, clean-tree
+  path/symlink boundary, runner detection, forbidden-operation scan, clean-tree
   policy) before running it.
 - **Constraints:** same policy as `script run`; optional `--require-clean` /
   `--allow-dirty` (default allow-dirty) and `--json`. There is no `--print` (the command
@@ -332,10 +334,23 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
   - `.aikit/temp/`
   - `.scratch/work/temp/`
   - `.scratch/work/outputs/`
-- **Supported extensions** (interpreter chosen by extension, never by shebang):
-  - `.zsh` via `/bin/zsh`
-  - `.sh` via `/bin/sh`
-  - extensionless or unknown extensions are rejected.
+- **Cross-OS runner detection (deterministic, OS-aware).** The runner is detected, not
+  fixed. Supported extensions: `.sh`, `.zsh`, `.ps1`, `.cmd`, `.bat`, `.py`, `.js`.
+  Supported runner names: `sh`, `zsh`, `bash`, `pwsh`, `powershell`, `cmd`, `python`,
+  `python3`, `node`. Selection order:
+  1. explicit `--runner <name>`;
+  2. config `script_runner.extension_map` for the extension;
+  3. a recognized `#!` shebang (unless `--no-shebang` or `detect_from_shebang=false`);
+  4. the built-in extension map;
+  5. an OS-aware default fallback;
+  6. else a clear blocked failure.
+
+  `script_runner.preferred_runners` may reorder candidates. On Windows, `.ps1` uses
+  `pwsh`/`powershell` and `.cmd`/`.bat` use `cmd` — **Git Bash is not required**;
+  `.sh`/`.zsh` run only when a discoverable compatible runner exists. An unknown script
+  type blocks with `blocked_unknown_script_type`; a selected-but-unavailable runner blocks
+  with `blocked_runner_not_found`; an unknown `--runner` name blocks with
+  `blocked_runner_not_allowed`.
 - `--print` validates policy and prints the planned command **without executing**
   (recorded as `executed: false`; no run directory is created).
 - `--require-clean` blocks when the tracked working tree is dirty
@@ -343,14 +358,15 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
 - `--allow-dirty` permits a dirty tracked tree; this is the **default** when neither
   flag is given. `--require-clean` and `--allow-dirty` cannot be combined.
 - On execution the output run directory contains the copied script (extension
-  retained), `stdout.txt`, `stderr.txt`, and `run.json` (interpreter, argv, cwd, git
-  heads, exit code, timings, paths, …).
+  retained), `stdout.txt`, `stderr.txt`, and `run.json`, which records runner metadata:
+  `detected_runner`, `detection_source`, `used_shebang`, `used_extension_map`, the
+  resolved interpreter, `argv`, cwd, git heads, exit code, timings, and paths.
 
 ## Agent-Generated Script Rules
 
 `aikit` validates *where the script file lives* (it must resolve to a real file under an
 allowed input location) and records the run. But once execution begins, the script runs
-from the repository root through `/bin/sh` or `/bin/zsh`, and `aikit script run` does
+from the repository root through its detected runner, and `aikit script run` does
 **not** constrain which paths the script touches after it starts — it is **not a
 filesystem sandbox**. A script under `.aikit/temp/do_stuff.sh` can therefore read and
 write files across the repository, which is exactly what makes useful commands (`sed`,

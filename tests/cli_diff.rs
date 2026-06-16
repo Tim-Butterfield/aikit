@@ -64,7 +64,7 @@ fn make_anchor(repo: &Path, id: &str, git_head: &str) {
     let body = serde_json::json!({
         "schema_version": 1, "kind": "aikit.batch_anchor", "anchor_id": id,
         "created_at": "2026-01-01T00:00:00Z", "repo_root": repo.to_str().unwrap(),
-        "git_head": git_head, "git_branch": "main", "git_status_porcelain": "",
+        "git_head": git_head, "git_branch": "main",
         "filesystem_anchor_time": "2026-01-01T00:00:00Z",
     });
     fs::write(dir.join(format!("{id}.json")), body.to_string()).unwrap();
@@ -148,7 +148,7 @@ fn diff_anchor_rejects_foreign_repo() {
     let body = serde_json::json!({
         "schema_version": 1, "kind": "aikit.batch_anchor", "anchor_id": "foreign",
         "created_at": "2026-01-01T00:00:00Z", "repo_root": other.path().to_str().unwrap(),
-        "git_head": head(other.path()), "git_branch": "main", "git_status_porcelain": "",
+        "git_head": head(other.path()), "git_branch": "main",
         "filesystem_anchor_time": "2026-01-01T00:00:00Z",
     });
     fs::write(dir.join("foreign.json"), body.to_string()).unwrap();

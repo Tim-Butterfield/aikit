@@ -1,19 +1,25 @@
 //! `aikit batch start` and `aikit batch changed` implementations.
 //!
-//! Batch 1 keeps change detection deliberately simple (per the plan): Git status
-//! is the primary signal for tracked files; an optional mtime heuristic covers
-//! untracked files. Perfect historical reconstruction is a non-goal.
+//! Anchor-based changed-file discovery is **timestamp-based**: it reports existing files
+//! whose filesystem modification time is newer than the anchor file. It does not consult
+//! `git status` — tracked/untracked/staged/unstaged status is not the deciding factor, so
+//! a file that is dirty relative to `HEAD` but was last modified before the anchor is
+//! excluded. `.gitignore`/`.git/info/exclude` and aikit's own areas are skipped. Deleted
+//! files are out of scope (no content exists to bundle). mtime is a best-effort heuristic.
 
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+use globset::GlobSet;
+use ignore::WalkBuilder;
 use sha2::{Digest, Sha256};
 use time::format_description::FormatItem;
 use time::macros::format_description;
 use time::{OffsetDateTime, PrimitiveDateTime};
 
 use crate::cli::{BatchListArgs, BatchShowArgs, ChangedArgs, StartArgs};
+use crate::config::ResolvedConfig;
 use crate::errors::{blocked, AikitError};
 use crate::formats::{
     AnchorRef, AnchorView, BatchAnchor, BatchList, BatchListCounts, BatchShow, ChangedFile,
@@ -29,24 +35,28 @@ const TS_FORMAT: &[FormatItem<'static>] =
 const ID_FORMAT: &[FormatItem<'static>] =
     format_description!("[year][month][day]-[hour][minute][second]");
 
-/// aikit's own output directories, excluded from changed-file results by default.
-/// Because change detection uses `--untracked-files=all`, untracked files are
-/// listed individually and can be matched against these precise prefixes.
-const DEFAULT_EXCLUDES: &[&str] = &[".git/", ".aikit/outputs/", ".scratch/work/outputs/aikit/"];
-
 const MTIME_NOTE: &str =
-    "Untracked results use a best-effort filesystem mtime heuristic and may be imprecise.";
+    "Anchor-based discovery is timestamp-based: it reports existing files whose filesystem \
+modification time is newer than the anchor file. mtime is a best-effort heuristic and may \
+be imprecise.";
 
 pub fn start(args: StartArgs) -> Result<(), AikitError> {
     let root = repo::detect_root()?;
     let head = repo::git_head(&root);
     let branch = repo::git_branch(&root);
-    let status = repo::git_status_porcelain(&root);
 
     let now = OffsetDateTime::now_utc();
     let created_at = format_ts(now, TS_FORMAT);
     let short = short_head(&head);
     let anchor_id = format!("{}-{}", format_ts(now, ID_FORMAT), short);
+
+    // The initial file snapshot is optional (no full repo scan unless requested): only
+    // `--snapshot` records the tracked-file list at anchor time.
+    let initial_snapshot = if args.snapshot {
+        Some(repo::git_tracked_files(&root))
+    } else {
+        None
+    };
 
     let anchor = BatchAnchor {
         schema_version: SCHEMA_VERSION,
@@ -56,8 +66,9 @@ pub fn start(args: StartArgs) -> Result<(), AikitError> {
         repo_root: root.display().to_string(),
         git_head: head,
         git_branch: branch,
-        git_status_porcelain: status,
         filesystem_anchor_time: created_at,
+        aikit_version: env!("CARGO_PKG_VERSION").to_string(),
+        initial_snapshot,
     };
 
     // A relative --output is resolved against the repo root (not the cwd), matching
@@ -110,71 +121,24 @@ pub fn start(args: StartArgs) -> Result<(), AikitError> {
 pub fn changed(args: ChangedArgs) -> Result<(), AikitError> {
     let root = repo::detect_root()?;
     let anchor = load_anchor(&args.anchor, &root)?;
-    // Validated above, so the timestamp parses.
-    let anchor_time = parse_ts(&anchor.filesystem_anchor_time)
-        .expect("anchor timestamp validated in load_anchor");
+    let reference = anchor_reference_time(&args.anchor, &anchor);
+    let cfg = crate::config::load(&root)?;
 
-    let porcelain = repo::git_status_changed(&root);
-    let mut files: Vec<ChangedFile> = Vec::new();
+    // Timestamp-based discovery: existing files whose filesystem mtime is newer than the
+    // anchor. Git status is NOT consulted — tracked/untracked/staged/unstaged is not the
+    // deciding factor; a pre-existing file that is dirty vs HEAD but was last modified
+    // before the anchor is excluded. Deleted files are out of scope (no content on disk).
+    let paths = walk_changed_since_anchor(&root, reference, &cfg)?;
+    let files: Vec<ChangedFile> = paths
+        .iter()
+        .map(|p| make_file(&root, p, "modified", "anchor_mtime", args.hash))
+        .collect();
 
-    // `-z` output is NUL-delimited; rename/copy records are followed by their
-    // original path as the next NUL field. Paths are verbatim (never quoted).
-    let records: Vec<&str> = porcelain.split('\0').collect();
-    let mut i = 0;
-    while i < records.len() {
-        let entry = records[i];
-        i += 1;
-        // Skip empty entries (including the trailing field after the final NUL).
-        // The first 3 bytes of a real record are "XY " (ASCII), so byte-slicing is safe.
-        if entry.len() < 4 {
-            continue;
-        }
-        let xy = &entry[..2];
-        let path = &entry[3..];
-
-        if xy.contains('R') || xy.contains('C') {
-            // Rename/copy: `path` is the new name; the next NUL field is the
-            // original path, which must be consumed either way to stay in sync.
-            let orig = records.get(i).copied().filter(|s| !s.is_empty());
-            if orig.is_some() {
-                i += 1;
-            }
-            push_if_included(&mut files, &root, path, "created", "git_status", args.hash);
-            // A rename removes the original; a copy leaves it in place.
-            if xy.contains('R') {
-                if let Some(orig) = orig {
-                    push_if_included(&mut files, &root, orig, "deleted", "git_status", args.hash);
-                }
-            }
-        } else if xy == "??" {
-            // Untracked: included only when requested, and only when its mtime is
-            // strictly newer than the anchor. A file we cannot stat is skipped
-            // rather than falsely reported as created.
-            if args.tracked_only || !args.include_untracked {
-                continue;
-            }
-            if is_excluded(path) {
-                continue;
-            }
-            match file_mtime(&root.join(path)) {
-                Some(mt) if mt > anchor_time => {
-                    files.push(make_file(&root, path, "created", "mtime", args.hash));
-                }
-                _ => continue,
-            }
-        } else {
-            let status = status_from_xy(xy);
-            push_if_included(&mut files, &root, path, status, "git_status", args.hash);
-        }
-    }
-
-    files.sort_by(|a, b| a.path.cmp(&b.path).then(a.status.cmp(&b.status)));
-    files.dedup_by(|a, b| a.path == b.path && a.status == b.status);
     let counts = count(&files);
-    let notes = if files.iter().any(|f| f.source == "mtime") {
-        Some(vec![MTIME_NOTE.to_string()])
-    } else {
+    let notes = if files.is_empty() {
         None
+    } else {
+        Some(vec![MTIME_NOTE.to_string()])
     };
 
     let out = ChangedOutput {
@@ -216,62 +180,245 @@ pub fn changed(args: ChangedArgs) -> Result<(), AikitError> {
     Ok(())
 }
 
-/// Validate an anchor and return `(anchor_id, paths)` where `paths` are the
-/// repo-relative paths of files that currently **exist** and have changed since the
-/// anchor (created or modified, tracked). Reuses the same `git status` parsing as
-/// `batch changed` (tracked changes only; no untracked, no deleted — deleted files
-/// have no content to bundle). Sorted and de-duplicated.
-///
-/// Used by anchor-driven `review generate --anchor`; surfaces the same blocked
-/// states as `batch changed` for missing/invalid/cross-repo anchors.
-pub fn changed_files_since_anchor(
-    repo_root: &Path,
-    anchor_path: &str,
-) -> Result<(String, Vec<String>), AikitError> {
-    let anchor = load_anchor(anchor_path, repo_root)?;
+/// The reference time for anchor-based changed-file discovery: the anchor **file's**
+/// filesystem mtime (full precision — "the anchor file timestamp is the reference
+/// point"), falling back to the recorded `filesystem_anchor_time` only when the file's
+/// mtime cannot be read.
+fn anchor_reference_time(anchor_path: &str, anchor: &BatchAnchor) -> OffsetDateTime {
+    file_mtime(Path::new(anchor_path)).unwrap_or_else(|| {
+        parse_ts(&anchor.filesystem_anchor_time).expect("anchor timestamp validated in load_anchor")
+    })
+}
 
-    let porcelain = repo::git_status_changed(repo_root);
-    let mut paths: Vec<String> = Vec::new();
-    let records: Vec<&str> = porcelain.split('\0').collect();
-    let mut i = 0;
-    while i < records.len() {
-        let entry = records[i];
-        i += 1;
-        if entry.len() < 4 {
+/// Top-level repo areas always excluded from anchor discovery (git metadata and aikit's
+/// own local working/output areas), regardless of gitignore state. This is a safety net
+/// independent of `.gitignore` so anchor/output/run artifacts never enter the changed set.
+fn is_hard_excluded(rel: &str) -> bool {
+    let top = rel.split('/').next().unwrap_or(rel);
+    matches!(top, ".git" | ".aikit" | ".scratch" | ".claude")
+}
+
+/// Repo-relative paths of existing regular files whose filesystem mtime is strictly
+/// newer than the anchor reference time. This is the timestamp-based "changed since
+/// anchor" set shared by `batch changed --anchor` and `review generate --anchor`.
+///
+/// It does **not** consult `git status`: tracked/untracked/staged/unstaged status is not
+/// the deciding factor — only mtime is. A pre-existing file that is dirty relative to
+/// `HEAD` but was last modified before the anchor is excluded. `.gitignore` /
+/// `.git/info/exclude` are honored (so aikit outputs, build trees, and other ignored
+/// areas are skipped); aikit's own areas and configured build/dependency directories are
+/// also excluded as a safety net. Symlinks are not followed and only regular files are
+/// returned, so nothing outside the repo is reported. Deleted files are out of scope
+/// (no content exists on disk to bundle).
+fn walk_changed_since_anchor(
+    repo_root: &Path,
+    reference_time: OffsetDateTime,
+    cfg: &ResolvedConfig,
+) -> Result<Vec<String>, AikitError> {
+    let root_canon = fs::canonicalize(repo_root)
+        .map_err(|e| AikitError::other(format!("failed to resolve repo root: {e}")))?;
+    let exclude = cfg.exclude_globset()?;
+    let rules = cfg.exclude_dir_rules();
+    let prune_root = root_canon.clone();
+    let prune_rules = rules.clone();
+
+    let mut walker = WalkBuilder::new(&root_canon);
+    walker
+        .hidden(false) // visit tracked dotfiles (.gitignore, .github/, …)
+        .git_global(false) // ignore the user's global excludes for determinism
+        .follow_links(false);
+    walker.filter_entry(move |entry| {
+        let rel = match entry.path().strip_prefix(&prune_root) {
+            Ok(r) => r.to_string_lossy().replace('\\', "/"),
+            Err(_) => return true,
+        };
+        if rel.is_empty() {
+            return true;
+        }
+        if is_hard_excluded(&rel) {
+            return false;
+        }
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            return !prune_rules.prunes(&rel);
+        }
+        true
+    });
+
+    let mut out: Vec<String> = Vec::new();
+    for result in walker.build() {
+        let entry = match result {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
             continue;
         }
-        let xy = &entry[..2];
-        let path = &entry[3..];
-
-        if xy.contains('R') || xy.contains('C') {
-            // Rename/copy: the new path is usually present; consume the original
-            // (deleted) field either way. A staged rename whose destination was then
-            // deleted in the worktree (e.g. `RD`) leaves no file to bundle, so only
-            // include the new path when it actually exists.
-            let orig = records.get(i).copied().filter(|s| !s.is_empty());
-            if orig.is_some() {
-                i += 1;
-            }
-            if !is_excluded(path) && exists_in_worktree(repo_root, path) {
-                paths.push(path.to_string());
-            }
-        } else if xy == "??" {
-            // Untracked is not part of the tracked changed-set (matches batch changed).
+        let rel = match entry.path().strip_prefix(&root_canon) {
+            Ok(r) => r.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+        if exclude.is_match(&rel) {
             continue;
-        } else {
-            // Existing created/modified files are bundle-able; deleted files are not.
-            if status_from_xy(xy) != "deleted"
-                && !is_excluded(path)
-                && exists_in_worktree(repo_root, path)
-            {
-                paths.push(path.to_string());
-            }
+        }
+        match file_mtime(entry.path()) {
+            Some(mt) if mt > reference_time => out.push(rel),
+            _ => {}
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// A file discovered by enhanced anchor discovery, with the signal that detected it.
+#[derive(Debug, Clone)]
+pub struct DiscoveredFile {
+    pub path: String,
+    /// `anchor_mtime` (timestamp-based) | `explicit` (configured `include_files`).
+    pub source: String,
+}
+
+/// The result of enhanced anchor discovery: bundle-able files (created/modified or
+/// allowlisted), plus tracked deletions/renames recorded for the manifest only.
+#[derive(Debug, Default)]
+pub struct BundleDiscovery {
+    pub anchor_id: String,
+    pub files: Vec<DiscoveredFile>,
+    pub deletions: Vec<DiscoveredFile>,
+    pub notes: Vec<String>,
+}
+
+/// Timestamp-based anchor discovery for `review generate --anchor`.
+///
+/// The base set is [`walk_changed_since_anchor`] — existing files whose filesystem mtime
+/// is newer than the anchor (no `git status`; status/dirtiness is not the deciding
+/// factor). Every file records the `anchor_mtime` detection source. When enhanced
+/// discovery is enabled (config `include_ignored_batch_files` or
+/// `--include-ignored-batch-files`) plus `include_globs`, allowlisted *ignored* files
+/// modified after the anchor are also pulled in. Configured `include_files` are always
+/// included when present. Deleted files are out of scope (no content to bundle).
+pub fn discover_for_bundle(
+    repo_root: &Path,
+    anchor_path: &str,
+    cfg: &ResolvedConfig,
+) -> Result<BundleDiscovery, AikitError> {
+    let anchor = load_anchor(anchor_path, repo_root)?;
+    let reference = anchor_reference_time(anchor_path, &anchor);
+
+    let mut files: Vec<DiscoveredFile> = walk_changed_since_anchor(repo_root, reference, cfg)?
+        .into_iter()
+        .map(|p| discovered(&p, "anchor_mtime"))
+        .collect();
+
+    // Enhanced: allowlisted ignored files modified after the anchor (these are skipped by
+    // the gitignore-honoring base walk, so they are pulled in explicitly here).
+    if cfg.include_ignored_batch_files && !cfg.include_globs.is_empty() {
+        let include = cfg.include_globset()?;
+        let exclude = cfg.exclude_globset()?;
+        let rules = cfg.exclude_dir_rules();
+        for rel in scan_ignored_files(repo_root, &include, &exclude, &rules, reference)? {
+            files.push(discovered(&rel, "anchor_mtime"));
         }
     }
 
-    paths.sort();
-    paths.dedup();
-    Ok((anchor.anchor_id, paths))
+    // Explicit always-include files, when they currently exist and are not excluded.
+    let exclude = cfg.exclude_globset()?;
+    for inc in &cfg.include_files {
+        let normalized = inc.replace('\\', "/");
+        if !exclude.is_match(&normalized) && exists_in_worktree(repo_root, &normalized) {
+            files.push(discovered(&normalized, "explicit"));
+        }
+    }
+
+    // Deterministic order; first-seen source wins on duplicates.
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    files.dedup_by(|a, b| a.path == b.path);
+
+    let notes = if files.is_empty() {
+        Vec::new()
+    } else {
+        vec![MTIME_NOTE.to_string()]
+    };
+
+    Ok(BundleDiscovery {
+        anchor_id: anchor.anchor_id,
+        files,
+        deletions: Vec::new(),
+        notes,
+    })
+}
+
+fn discovered(path: &str, source: &str) -> DiscoveredFile {
+    DiscoveredFile {
+        path: path.to_string(),
+        source: source.to_string(),
+    }
+}
+
+/// Walk the worktree (gitignore filtering disabled, so ignored files are visited) and
+/// return repo-relative paths that match the include allowlist, do not match the
+/// exclude globs, and were modified after the anchor. Excluded directory prefixes are
+/// pruned so large/sensitive trees are never descended into. Symlinks are not followed
+/// and only regular files are returned, so nothing outside the repo is ever reported.
+fn scan_ignored_files(
+    repo_root: &Path,
+    include: &GlobSet,
+    exclude: &GlobSet,
+    dir_rules: &crate::config::ExcludeDirRules,
+    anchor_time: OffsetDateTime,
+) -> Result<Vec<String>, AikitError> {
+    let root_canon = fs::canonicalize(repo_root)
+        .map_err(|e| AikitError::other(format!("failed to resolve repo root: {e}")))?;
+    let rules = dir_rules.clone();
+    let prune_root = root_canon.clone();
+
+    let mut walker = WalkBuilder::new(&root_canon);
+    walker
+        .standard_filters(false) // visit ignored files too
+        .hidden(false) // visit dotfiles such as .aikit/
+        .parents(false)
+        .follow_links(false);
+    walker.filter_entry(move |entry| {
+        // Hard-exclude git metadata and aikit's own areas; prune excluded directories.
+        let rel = match entry.path().strip_prefix(&prune_root) {
+            Ok(r) => r.to_string_lossy().replace('\\', "/"),
+            Err(_) => return true,
+        };
+        if rel.is_empty() {
+            return true;
+        }
+        if is_hard_excluded(&rel) {
+            return false;
+        }
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_dir {
+            return !rules.prunes(&rel);
+        }
+        true
+    });
+
+    let mut out: Vec<String> = Vec::new();
+    for result in walker.build() {
+        let entry = match result {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let rel = match entry.path().strip_prefix(&root_canon) {
+            Ok(r) => r.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+        if !include.is_match(&rel) || exclude.is_match(&rel) {
+            continue;
+        }
+        match file_mtime(entry.path()) {
+            Some(mt) if mt > anchor_time => out.push(rel),
+            _ => {}
+        }
+    }
+    Ok(out)
 }
 
 /// `aikit batch list` — list valid batch anchors under the selected output root
@@ -388,14 +535,6 @@ pub fn show(args: BatchShowArgs) -> Result<(), AikitError> {
         println!("  git branch: {}", a.git_branch);
         println!("  git head: {}", a.git_head);
         println!("  belongs to current repo: {}", record.belongs_to_repo);
-        if a.git_status_porcelain.trim().is_empty() {
-            println!("  git status at anchor time: (clean)");
-        } else {
-            println!("  git status at anchor time:");
-            for line in a.git_status_porcelain.lines() {
-                println!("    {line}");
-            }
-        }
     }
     Ok(())
 }
@@ -534,8 +673,9 @@ pub fn anchor_view(anchor: &BatchAnchor, path: String) -> AnchorView {
         repo_root: anchor.repo_root.clone(),
         git_branch: anchor.git_branch.clone(),
         git_head: anchor.git_head.clone(),
-        git_status_porcelain: anchor.git_status_porcelain.clone(),
         filesystem_anchor_time: anchor.filesystem_anchor_time.clone(),
+        aikit_version: anchor.aikit_version.clone(),
+        initial_snapshot_count: anchor.initial_snapshot.as_ref().map(|s| s.len()),
     }
 }
 
@@ -619,20 +759,6 @@ fn same_repo(repo_root: &Path, anchor_root: &str) -> bool {
     }
 }
 
-fn push_if_included(
-    files: &mut Vec<ChangedFile>,
-    root: &Path,
-    rel: &str,
-    status: &str,
-    source: &str,
-    hash: bool,
-) {
-    if is_excluded(rel) {
-        return;
-    }
-    files.push(make_file(root, rel, status, source, hash));
-}
-
 fn short_head(head: &str) -> String {
     if head.is_empty() {
         "nohead".to_string()
@@ -640,16 +766,6 @@ fn short_head(head: &str) -> String {
         head[..7].to_string()
     } else {
         head.to_string()
-    }
-}
-
-fn status_from_xy(xy: &str) -> &'static str {
-    if xy.contains('D') {
-        "deleted"
-    } else if xy.contains('A') {
-        "created"
-    } else {
-        "modified"
     }
 }
 
@@ -688,14 +804,9 @@ fn count(files: &[ChangedFile]) -> Counts {
     c
 }
 
-fn is_excluded(path: &str) -> bool {
-    DEFAULT_EXCLUDES.iter().any(|p| path.starts_with(p))
-}
-
 /// Whether a repo-relative path is currently present in the worktree (a regular
 /// file or a symlink; `symlink_metadata` does not follow the link). Used to keep
-/// non-existent changed paths (e.g. a deleted rename destination) out of the
-/// anchor-driven review input set.
+/// non-existent configured `include_files` out of the anchor-driven review input set.
 fn exists_in_worktree(repo_root: &Path, rel: &str) -> bool {
     fs::symlink_metadata(repo_root.join(rel)).is_ok()
 }

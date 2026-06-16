@@ -59,7 +59,9 @@ aikit diff anchor <anchor-id> --json"
         long_about = "Report mechanical local environment facts useful for debugging aikit \
 usage. `env snapshot` prints a bounded, fixed set of facts — aikit version, current \
 executable, OS family, CPU architecture, working directory, repo facts when inside a Git \
-repository, supported interpreter availability, and local git/Rust/Cargo versions.\n\n\
+repository, legacy/informational shell-interpreter probes (`/bin/sh`, `/bin/zsh`), and \
+local git/Rust/Cargo versions. These shell probes are informational only and are NOT the \
+cross-OS runner-availability/readiness model used by `repo doctor`.\n\n\
 It is read-only: it creates no files or directories, modifies no repo files, touches no \
 remotes, and runs no network commands. It deliberately does NOT dump all environment \
 variables, the raw PATH, tokens, credentials, keys, or any provider/model-specific or \
@@ -166,21 +168,54 @@ aikit repo doctor --json"
         long_about = "Validate and run local scripts under mechanical safety controls. This \
 is NOT a security sandbox: it reduces accidental unsafe execution but does not make an \
 arbitrary script safe.\n\n\
-`script run <script-path>` runs the script through a fixed interpreter and records an audit \
-trail; `script check <script-path>` applies the same policy but does not execute and writes \
-nothing. The script must live under an allowed local work area (.aikit/temp/, \
+`script run <script-path>` runs the script through its detected runner and records an \
+audit trail; `script check <script-path>` applies the same policy but does not execute \
+and writes nothing. The script must live under an allowed local work area (.aikit/temp/, \
 .scratch/work/temp/, or .scratch/work/outputs/) — those are input locations, not output \
-locations. Only `.zsh` (/bin/zsh) and `.sh` (/bin/sh) are supported; the interpreter is \
-chosen from the extension, never from a shebang. For `script run`, the run record (copied \
-script, stdout.txt, stderr.txt, run.json) is written under the default output directory \
-.aikit/outputs/runs/<id>/; override with --output <dir> (`.scratch` output is used only \
-when requested explicitly).",
+locations.\n\n\
+Cross-OS runner detection is deterministic and OS-aware. Supported extensions: .sh, .zsh, \
+.ps1, .cmd, .bat, .py, .js. Runner names: sh, zsh, bash, pwsh, powershell, cmd, python, \
+python3, node. Selection order: (1) explicit `--runner <name>`; (2) config \
+`script_runner.extension_map` for the extension; (3) a recognized `#!` shebang (unless \
+`--no-shebang` or `detect_from_shebang=false`); (4) the built-in extension map; (5) an \
+OS-aware default fallback; else a clear blocked failure. `script_runner.preferred_runners` \
+reorders candidates, and unknown configured runner names fail clearly. On Windows, .ps1 \
+uses pwsh/powershell and .cmd/.bat use cmd with no Git Bash required; .sh/.zsh run only \
+when a discoverable interpreter exists. Blocked states: blocked_unknown_script_type, \
+blocked_runner_not_found, blocked_runner_not_allowed. For `script run`, the run record \
+(copied script, stdout.txt, stderr.txt, run.json with detected_runner / detection_source \
+/ used_shebang / used_extension_map / argv) is written under .aikit/outputs/runs/<id>/; \
+override with --output <dir> (`.scratch` output only when requested explicitly).",
         after_help = "Examples:\n  \
 aikit script check .aikit/temp/build.sh\n  \
 aikit script run .aikit/temp/build.sh\n  \
+aikit script run .aikit/temp/task.py --runner python3\n  \
 aikit script run .scratch/work/temp/task.zsh --print"
     )]
     Script(ScriptCli),
+
+    /// Report aikit's version and build metadata.
+    #[command(
+        long_about = "Report aikit's version and build metadata. The package/binary \
+version is the Cargo package version (the same string as `aikit --version`); it is \
+distinct from the per-record `schema_version` used by other artifacts.\n\n\
+Human output is compact. With --json, emits a machine-readable record \
+(`aikit.version`) with name, version, git_commit, build_profile, os, arch, target, and \
+rust_profile. git_commit/build_profile/target are best-effort build-time values and may \
+be null. Read-only; creates nothing and works outside a Git repository.",
+        after_help = "Examples:\n  \
+aikit version\n  \
+aikit version --json\n  \
+aikit --version"
+    )]
+    Version(VersionArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct VersionArgs {
+    /// Print the machine-readable version record to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -395,11 +430,22 @@ Output (review_bundle.txt + manifest.json) is written under the default local ou
 directory .aikit/outputs/reviews/<id>/; override the root with --output <dir> (pass a \
 .scratch/... path to use scratch, which is never used by default). Created artifact paths \
 are printed in human output; with --json the manifest is printed to stdout including a \
-`written` array of the created file paths.",
+`written` array of the created file paths.\n\n\
+Output shape (defaults preserve legacy behavior): --single-file writes exactly one bundle \
+file with the manifest embedded and no review directory or sidecar manifest.json (default \
+file path tmp/review_bundle.txt; override with --output <file>). --embed-manifest embeds \
+the manifest in the bundle text without changing the directory layout; \
+--no-sidecar-manifest suppresses the sidecar manifest.json. Enhanced anchor discovery \
+(--include-ignored-batch-files) additionally bundles untracked non-ignored files and \
+allowlisted ignored files modified after the anchor (per include/exclude globs) and \
+records tracked deletions in the manifest. Defaults for any of these can be set in \
+aikit.config.json or .aikit/config.json (CLI flags take precedence); see \
+aikit.config.example.json.",
         after_help = "Examples:\n  \
 aikit review generate --files src/main.rs README.md\n  \
 aikit review generate --anchor .aikit/outputs/batches/<anchor-id>.json --json\n  \
-aikit review generate --anchor <anchor.json> --max-file-bytes 200000 --max-total-bytes 2000000"
+aikit review generate --anchor <anchor.json> --single-file --include-ignored-batch-files\n  \
+aikit review generate --anchor <anchor.json> --single-file --output tmp/review_bundle.txt"
     )]
     Generate(ReviewGenerateArgs),
 }
@@ -415,9 +461,28 @@ pub struct ReviewGenerateArgs {
     #[arg(long, value_name = "ANCHOR_JSON")]
     pub anchor: Option<String>,
 
-    /// Override the output directory root (default: .aikit/outputs; pass .scratch/... to use scratch).
-    #[arg(long, value_name = "DIR")]
+    /// Override the output location. Directory mode: the output root (default
+    /// .aikit/outputs; pass .scratch/... to use scratch). Single-file mode: the bundle
+    /// file path (default tmp/review_bundle.txt).
+    #[arg(long, value_name = "PATH")]
     pub output: Option<String>,
+
+    /// Write exactly one bundle file (embedded manifest, no review directory, no sidecar manifest.json).
+    #[arg(long)]
+    pub single_file: bool,
+
+    /// Embed the manifest inside the bundle text (implied by --single-file).
+    #[arg(long)]
+    pub embed_manifest: bool,
+
+    /// Do not write a sidecar manifest.json (directory mode only; single-file never writes one).
+    #[arg(long)]
+    pub no_sidecar_manifest: bool,
+
+    /// Enhanced anchor discovery: also bundle untracked non-ignored files and
+    /// allowlisted ignored files modified after the anchor, and record tracked deletions.
+    #[arg(long)]
+    pub include_ignored_batch_files: bool,
 
     /// Truncate each file's embedded content to at most N bytes.
     #[arg(long, value_name = "N")]
@@ -470,10 +535,19 @@ command is read-only: it creates no files or directories (no `.aikit/`, `.scratc
 It reports the repo root, branch, HEAD, tracked-tree clean/dirty state, whether \
 `.aikit/`, `.aikit/temp/`, and `.aikit/outputs/` exist, whether `.aikit/` is ignored \
 (and the ignore source), the default output root, allowed script input locations (and \
-whether each exists), supported interpreters (`/bin/sh`, `/bin/zsh`) and whether each \
-exists, the aikit version, any warnings, and an overall readiness summary.\n\n\
-Exit 0 when a repository is found, even with warnings (missing `.aikit/temp/` or ignore \
-coverage are warnings, not failures); only being outside a Git repository is an error.",
+whether each exists), the aikit version, any warnings, and an overall readiness \
+summary.\n\n\
+Runner availability: it reports `runners` (each supported script runner — sh, bash, zsh, \
+pwsh, powershell, cmd, python3, python, node — with `available` and OS `applicable` \
+flags) and `any_runner_available`. Readiness means sane local aikit state (`.aikit/temp/` \
+present and `.aikit/` ignored) AND at least one supported runner available for the \
+current OS; it does NOT require any specific Unix shell (Windows is ready with \
+pwsh/cmd, and a host without zsh is still ready). The legacy `/bin/sh` and `/bin/zsh` \
+probes are reported as informational shell interpreters only and do not gate \
+readiness.\n\n\
+Exit 0 when a repository is found, even with warnings (missing `.aikit/temp/`, ignore \
+coverage, or no available runner are warnings, not failures); only being outside a Git \
+repository is an error.",
         after_help = "Examples:\n  \
 aikit repo doctor\n  \
 aikit repo doctor --json"
@@ -505,15 +579,24 @@ pub struct ScriptCli {
 pub enum ScriptCommand {
     /// Run a local script under mechanical safety controls (not a security sandbox).
     #[command(
-        long_about = "Run a local script through a fixed interpreter and write an audit \
+        long_about = "Run a local script through its detected runner and write an audit \
 record. NOTE: this is NOT a security sandbox. The allowed-location policy is the primary \
 control; the forbidden-operation scan is best-effort (naive substring matching, easily \
 bypassed, can false-positive), and running a script here does not make it safe.\n\n\
 The <script-path> must resolve (after symlink resolution) to a real file under an allowed \
 local work area: .aikit/temp/, .scratch/work/temp/, or .scratch/work/outputs/. These are \
-input locations only. Only `.zsh` (/bin/zsh) and `.sh` (/bin/sh) are supported; the \
-interpreter is selected from the extension, never from a shebang — extensionless or \
-unknown-extension scripts are rejected.\n\n\
+input locations only.\n\n\
+Cross-OS runner detection (deterministic, OS-aware) selects the interpreter in this \
+order: (1) an explicit `--runner <name>`; (2) the config `script_runner.extension_map`; \
+(3) a recognized `#!` shebang unless `--no-shebang`; (4) the built-in extension map; (5) \
+an OS-aware default fallback; else a clear blocked failure. Supported extensions: .sh, \
+.zsh, .ps1, .cmd, .bat, .py, .js. Runner values: sh, zsh, bash, pwsh, powershell, cmd, \
+python, python3, node. On Windows, .ps1 uses pwsh/powershell and .cmd/.bat use cmd \
+(no Git Bash required); .sh/.zsh run only if a discoverable interpreter exists. Unknown \
+types block with blocked_unknown_script_type; a selected-but-unavailable runner blocks \
+with blocked_runner_not_found; an unrecognized --runner blocks with \
+blocked_runner_not_allowed. run.json records detected_runner, detection_source, \
+used_shebang, used_extension_map, and the full argv.\n\n\
 Clean-tree policy: the default is allow-dirty (these scripts operate on working content). \
 `--require-clean` blocks when the tracked tree is dirty; `--allow-dirty` is the explicit \
 default; the two cannot be combined. With `--print`, policy is validated and the planned \
@@ -539,9 +622,11 @@ sandbox; it reports whether the mechanical policy accepts the script, not whethe
 script is safe.\n\n\
 The <script-path> must resolve (after symlink resolution) to a real file under an allowed \
 local work area: .aikit/temp/, .scratch/work/temp/, or .scratch/work/outputs/. The check \
-validates the allowed location, the path/symlink boundary, the extension/interpreter \
-(`.zsh` → /bin/zsh, `.sh` → /bin/sh; extensionless/unknown rejected), the best-effort \
-forbidden-operation scan, and the clean-tree policy.\n\n\
+validates the allowed location, the path/symlink boundary, cross-OS runner detection (same \
+order as `script run`: --runner, config extension_map, shebang unless --no-shebang, \
+built-in extension map, OS-aware fallback), the best-effort forbidden-operation scan, and \
+the clean-tree policy. The JSON report includes detected_runner, detection_source, \
+used_shebang, used_extension_map, and argv.\n\n\
 The script is never executed and never copied; no run directory, stdout.txt, stderr.txt, \
 or run.json is created. Exit 0 when the policy accepts the script, exit 3 with the named \
 blocked state when it does not, and exit 2 for invalid usage (e.g. --require-clean and \
@@ -562,6 +647,14 @@ pub struct ScriptRunArgs {
     /// Validate and print the planned command without executing the script.
     #[arg(long)]
     pub print: bool,
+
+    /// Force a specific runner (sh, zsh, bash, pwsh, powershell, cmd, python, python3, node).
+    #[arg(long, value_name = "RUNNER")]
+    pub runner: Option<String>,
+
+    /// Disable `#!` shebang detection (use config/extension mapping only).
+    #[arg(long)]
+    pub no_shebang: bool,
 
     /// Block when the tracked working tree is dirty (mutually exclusive with --allow-dirty).
     #[arg(long, conflicts_with = "allow_dirty")]
@@ -586,6 +679,14 @@ pub struct ScriptCheckArgs {
     #[arg(value_name = "SCRIPT_PATH")]
     pub script: String,
 
+    /// Force a specific runner (sh, zsh, bash, pwsh, powershell, cmd, python, python3, node).
+    #[arg(long, value_name = "RUNNER")]
+    pub runner: Option<String>,
+
+    /// Disable `#!` shebang detection (use config/extension mapping only).
+    #[arg(long)]
+    pub no_shebang: bool,
+
     /// Block when the tracked working tree is dirty (mutually exclusive with --allow-dirty).
     #[arg(long, conflicts_with = "allow_dirty")]
     pub require_clean: bool,
@@ -609,32 +710,40 @@ pub struct BatchCli {
 pub enum BatchCommand {
     /// Create a batch anchor before AI-agent work begins.
     #[command(
-        long_about = "Create a batch anchor capturing the current Git HEAD, branch, status, \
-and timestamp. Use this immediately before starting a unit of AI-agent or manual work, so \
-`batch changed` can later report what that work touched.\n\n\
+        long_about = "Create a batch anchor: a minimal timestamp reference recording the \
+current Git HEAD, branch, and timestamp. Use this immediately before starting a unit of \
+AI-agent or manual work, so `batch changed` can later report what that work touched. The \
+anchor is a timestamp reference only — it does NOT capture Git status; anchor-based \
+changed-file discovery is timestamp-based relative to the anchor file's mtime.\n\n\
 The anchor is written as JSON under the local output directory \
 .aikit/outputs/batches/ by default; override with --output <dir>. Output is local-only and \
-never needs committing.\n\n\
+never needs committing. The anchor also records the aikit version that created it.\n\n\
+--snapshot additionally records an initial snapshot of tracked files (repo-relative \
+paths) in the anchor; this is optional and is never a full repo content scan.\n\n\
 With --json, prints the anchor path and the anchor object as machine-readable JSON.",
-        after_help = "Example:\n  aikit batch start\n  aikit batch start --json"
+        after_help = "Example:\n  aikit batch start\n  aikit batch start --snapshot --json"
     )]
     Start(StartArgs),
 
-    /// List files created or modified since a batch anchor.
+    /// List files modified since a batch anchor (timestamp-based; not git status).
     #[command(
-        long_about = "List files created or modified since a batch anchor. Tracked changes \
-come from `git status` (working-tree state vs HEAD). Untracked files are included only with \
---include-untracked, using a best-effort filesystem mtime heuristic (newer than the anchor \
-time). Deletions are detected for tracked files only; renames are reported as delete+create. \
-aikit's own output directories are excluded by default.\n\n\
-Results are deterministic, repo-relative, and sorted lexicographically. With --json, prints \
-the full report (files, sources, sizes, counts) as machine-readable JSON; --hash adds a \
-SHA-256 for each existing file.\n\n\
-Limitation: mtime is a heuristic and can miss changed-then-reverted files; treat untracked \
-results as best-effort.",
+        long_about = "List existing files whose filesystem modification time is newer than \
+the anchor. This is TIMESTAMP-BASED discovery relative to the anchor file: it does NOT use \
+`git status`, and tracked/untracked/staged/unstaged status is not the deciding factor. A \
+pre-existing file that is dirty relative to HEAD but was last modified before the anchor is \
+NOT reported; a file modified after the anchor IS reported whether or not it is tracked. \
+Deleted files are out of scope (no content exists on disk to bundle).\n\n\
+`.gitignore` / `.git/info/exclude` are honored, and aikit's own areas (.git/, .aikit/, \
+.scratch/, .claude/) and configured build/dependency directories (target/, node_modules/, \
+dist/, build/) are excluded; configured include/exclude globs apply. Symlinks are not \
+followed.\n\n\
+Results are deterministic, repo-relative, and sorted lexicographically (status `modified`, \
+source `anchor_mtime`). With --json, prints the full report (files, sources, sizes, counts); \
+--hash adds a SHA-256 for each file.\n\n\
+Limitation: mtime is a best-effort heuristic (and can miss changed-then-reverted files).",
         after_help = "Example:\n  \
 aikit batch changed --anchor .aikit/outputs/batches/<anchor-id>.json\n  \
-aikit batch changed --anchor <anchor.json> --include-untracked --hash --json"
+aikit batch changed --anchor <anchor.json> --hash --json"
     )]
     Changed(ChangedArgs),
 
@@ -673,6 +782,10 @@ pub struct StartArgs {
     #[arg(long, value_name = "DIR")]
     pub output: Option<String>,
 
+    /// Record an initial snapshot of tracked files in the anchor (off by default; never a full repo scan).
+    #[arg(long)]
+    pub snapshot: bool,
+
     /// Print machine-readable JSON instead of human-readable text.
     #[arg(long)]
     pub json: bool,
@@ -688,15 +801,7 @@ pub struct ChangedArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// Only consider tracked files (ignore untracked files entirely).
-    #[arg(long, conflicts_with = "include_untracked")]
-    pub tracked_only: bool,
-
-    /// Include untracked files created since the anchor (mtime heuristic).
-    #[arg(long)]
-    pub include_untracked: bool,
-
-    /// Compute a SHA-256 for each reported file that still exists.
+    /// Compute a SHA-256 for each reported file.
     #[arg(long)]
     pub hash: bool,
 }
@@ -746,9 +851,9 @@ and must belong to the current repository; its recorded `git_head` is used as th
 base and must still exist locally (else blocked).\n\n\
 The diff (`git diff <base>`) captures committed changes since the anchor and current \
 tracked working-tree/index changes. Untracked file CONTENTS are not part of a Git diff \
-and are not included — use `batch changed --include-untracked` for that view. This is \
-inspection only: it creates no review bundle or output artifact and never touches \
-remotes.\n\n\
+and are not included — use `batch changed --anchor <anchor>` for a timestamp-based file \
+list. This is inspection only: it creates no review bundle or output artifact and never \
+touches remotes.\n\n\
 Default output includes anchor metadata, the name-status file list, and the diff stat. \
 `--stat` is the explicit form of the stat output (included by default); `--patch` appends \
 the full patch text; `--json` emits the structured report (patch only when `--patch`).",
@@ -776,9 +881,11 @@ network commands, and never touches remotes.\n\n\
 Reports the aikit version, current executable path, OS family, CPU architecture, current \
 working directory, and — when inside a Git repository — the repo root, branch, HEAD, \
 tracked-tree clean/dirty state, default output root, and whether `.aikit/`, `.aikit/temp/`, \
-and `.aikit/outputs/` exist and `.aikit/` is ignored. Also reports supported interpreter \
-availability (`/bin/sh`, `/bin/zsh`), local git/Rust/Cargo versions, and the shell from \
-`$SHELL` when set.\n\n\
+and `.aikit/outputs/` exist and `.aikit/` is ignored. Also reports legacy/informational \
+shell-interpreter probes (`/bin/sh`, `/bin/zsh`), local git/Rust/Cargo versions, and the \
+shell from `$SHELL` when set. These shell probes are informational only; they are NOT the \
+cross-OS runner-availability/readiness model reported by `repo doctor` (`env snapshot` \
+does not report runner availability).\n\n\
 It deliberately does NOT dump all environment variables, the raw PATH, tokens, \
 credentials, private keys, or any provider/model-specific or network-derived information. \
 PATH is summarized only (entry count and whether the current executable's directory is on \

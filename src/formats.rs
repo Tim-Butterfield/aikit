@@ -21,8 +21,19 @@ pub const KIND_BATCH_SHOW: &str = "aikit.batch_show";
 pub const KIND_DIFF_ANCHOR: &str = "aikit.diff_anchor";
 pub const KIND_ENV_SNAPSHOT: &str = "aikit.env_snapshot";
 pub const KIND_SCAN_SECRETS: &str = "aikit.scan_secrets";
+pub const KIND_VERSION: &str = "aikit.version";
 
 /// A point-in-time anchor written by `aikit batch start`.
+///
+/// The anchor is a **minimal timestamp reference**: anchor-based changed-file discovery
+/// is timestamp-based against the anchor file's mtime, so the anchor deliberately does
+/// NOT capture Git status. It records only identifying/timestamp metadata.
+///
+/// `aikit_version` and `initial_snapshot` were added after the initial schema; both
+/// carry `#[serde(default)]` so anchors written by older versions still deserialize
+/// (an absent `aikit_version` reads as an empty string, an absent snapshot as `None`).
+/// Older anchors may still contain a `git_status_porcelain` field; it is simply ignored
+/// on read (serde drops unknown fields).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BatchAnchor {
     pub schema_version: u32,
@@ -32,8 +43,14 @@ pub struct BatchAnchor {
     pub repo_root: String,
     pub git_head: String,
     pub git_branch: String,
-    pub git_status_porcelain: String,
     pub filesystem_anchor_time: String,
+    /// The aikit version that created the anchor (empty for anchors from older versions).
+    #[serde(default)]
+    pub aikit_version: String,
+    /// Optional initial file snapshot (repo-relative tracked paths at anchor time),
+    /// recorded only when `batch start --snapshot` is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_snapshot: Option<Vec<String>>,
 }
 
 /// The output of `aikit batch changed`.
@@ -46,8 +63,8 @@ pub struct ChangedOutput {
     pub generated_at: String,
     pub files: Vec<ChangedFile>,
     pub counts: Counts,
-    /// Limitation notes (e.g., that untracked results use a best-effort mtime
-    /// heuristic). Present only when relevant.
+    /// Limitation notes (e.g., that changed-file discovery uses a best-effort filesystem
+    /// mtime heuristic relative to the anchor). Present only when relevant.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<Vec<String>>,
 }
@@ -117,6 +134,25 @@ pub struct InventoryCounts {
     pub total_discovered: Option<usize>,
 }
 
+/// Build/version metadata reported by `aikit version`. Package version is the Cargo
+/// package version; this is distinct from any schema version (`schema_version`) used by
+/// other records. `git_commit`, `build_profile`, and `target` are best-effort build-time
+/// values and may be `null`.
+#[derive(Debug, Serialize)]
+pub struct VersionInfo {
+    pub schema_version: u32,
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    pub git_commit: Option<String>,
+    pub build_profile: Option<String>,
+    pub os: String,
+    pub arch: String,
+    pub target: Option<String>,
+    /// Reserved for a future Rust/toolchain profile string; currently always `null`.
+    pub rust_profile: Option<String>,
+}
+
 /// The manifest written by `aikit review generate` alongside the text bundle.
 #[derive(Debug, Serialize)]
 pub struct ReviewManifest {
@@ -125,11 +161,19 @@ pub struct ReviewManifest {
     pub review_id: String,
     pub repo_root: String,
     pub git_head: String,
+    /// The aikit version that generated this manifest (package version).
+    pub aikit_version: String,
     pub generated_at: String,
     pub inputs: ReviewInputs,
     pub limits: ReviewLimits,
     pub files: Vec<ReviewFile>,
+    /// Repo-relative bundle path: `review_bundle.txt` (directory mode) or the single
+    /// output file path (single-file mode).
     pub bundle_path: String,
+    /// Whether the manifest is also embedded inside the bundle text.
+    pub embedded_manifest: bool,
+    /// Whether a sidecar `manifest.json` was written next to the bundle.
+    pub sidecar_manifest: bool,
     pub totals: ReviewTotals,
 }
 
@@ -144,6 +188,9 @@ pub struct ReviewInputs {
     /// For anchor mode: the anchor's id, when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor_id: Option<String>,
+    /// For anchor mode: whether enhanced discovery (untracked/ignored/deletions) was used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enhanced_discovery: Option<bool>,
     /// The repo-relative input files in scope, in deterministic order.
     pub files: Vec<String>,
 }
@@ -164,10 +211,15 @@ pub struct ReviewFile {
     pub truncated: bool,
     pub lines_included: usize,
     pub bytes_included: u64,
-    /// Reason the file was omitted from the bundle, or `null` when included.
+    /// Reason the file was omitted from the bundle, or `null` when included
+    /// (`max_total_bytes` for a cap).
     pub omitted_reason: Option<String>,
     /// Which cap bound this file (`file_bytes` | `file_lines` | `total_bytes`), or `null`.
     pub cap_hit: Option<String>,
+    /// How the file was detected during anchor discovery (`anchor_mtime`, or `explicit`
+    /// for configured include_files), or `null` for explicit-files (`--files`) mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -190,7 +242,19 @@ pub struct ScriptRun {
     pub script_sha256: String,
     /// Filename of the script copy inside the run directory (retains the extension).
     pub script_copy_path: Option<String>,
+    /// The resolved interpreter/runner program path (e.g. `/bin/sh`, `node`, `pwsh`).
     pub interpreter: String,
+    /// Symbolic runner name chosen (`sh`, `zsh`, `bash`, `pwsh`, `powershell`, `cmd`,
+    /// `python`, `python3`, `node`).
+    pub detected_runner: String,
+    /// How the runner was chosen: `explicit_runner` | `config` | `shebang` |
+    /// `extension_map` | `default_fallback`.
+    pub detection_source: String,
+    /// Whether a `#!` shebang line selected the runner.
+    pub used_shebang: bool,
+    /// Whether the extension map (config or built-in) selected the runner.
+    pub used_extension_map: bool,
+    /// The full argv used to execute the script (program, flags, then the script path).
     pub argv: Vec<String>,
     pub cwd: String,
     pub require_clean: bool,
@@ -225,6 +289,19 @@ pub struct ScriptCheck {
     pub resolved_script_path: Option<String>,
     /// Interpreter that would be used; `null` when extension/location was not accepted.
     pub interpreter: Option<String>,
+    /// Symbolic runner name that would be used; `null` when no runner was resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detected_runner: Option<String>,
+    /// How the runner was chosen, or `null` when none was resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detection_source: Option<String>,
+    /// Whether a shebang selected the runner (false when no runner resolved).
+    pub used_shebang: bool,
+    /// Whether the extension map selected the runner (false when no runner resolved).
+    pub used_extension_map: bool,
+    /// The argv that would be used, or `null` when no runner was resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub argv: Option<Vec<String>>,
     pub require_clean: bool,
     pub allow_dirty: bool,
     /// Always false — `script check` never executes the script.
@@ -244,6 +321,16 @@ pub struct ScriptCheck {
 pub struct PathStatus {
     pub path: String,
     pub exists: bool,
+}
+
+/// Availability of a supported script runner for `repo doctor`. `applicable` is whether
+/// the runner can apply to the current OS (e.g. `cmd`/`powershell` are Windows-only);
+/// `available` is whether its program was found on this system.
+#[derive(Debug, Serialize)]
+pub struct RunnerStatus {
+    pub name: String,
+    pub available: bool,
+    pub applicable: bool,
 }
 
 /// A known aikit output artifact (a `batches/*.json` file, or an `inventory/`,
@@ -353,8 +440,12 @@ pub struct AnchorView {
     pub repo_root: String,
     pub git_branch: String,
     pub git_head: String,
-    pub git_status_porcelain: String,
     pub filesystem_anchor_time: String,
+    /// The aikit version that created the anchor (empty for anchors from older versions).
+    pub aikit_version: String,
+    /// Number of paths in the recorded initial snapshot, or `null` when none was recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_snapshot_count: Option<usize>,
 }
 
 /// A file under the batch folder that could not be parsed as a valid anchor.
@@ -600,7 +691,13 @@ pub struct RepoDoctor {
     /// Repo-relative default output root (`.aikit/outputs`).
     pub default_output_root: String,
     pub allowed_script_locations: Vec<PathStatus>,
+    /// Shell interpreter probe (`/bin/sh`, `/bin/zsh`), retained for compatibility and
+    /// informational only. Readiness no longer depends on these; see `runners`.
     pub interpreters: Vec<PathStatus>,
+    /// Availability of every supported script runner on the current OS.
+    pub runners: Vec<RunnerStatus>,
+    /// Whether at least one supported runner is available for the current OS.
+    pub any_runner_available: bool,
     pub current_exe: Option<String>,
     pub version: String,
     pub warnings: Vec<String>,

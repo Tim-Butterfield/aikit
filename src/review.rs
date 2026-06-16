@@ -18,7 +18,9 @@ use time::format_description::FormatItem;
 use time::macros::format_description;
 use time::OffsetDateTime;
 
+use crate::batch::DiscoveredFile;
 use crate::cli::ReviewGenerateArgs;
+use crate::config::{self, ResolvedConfig};
 use crate::errors::{blocked, AikitError};
 use crate::formats::{
     ReviewFile, ReviewInputs, ReviewLimits, ReviewManifest, ReviewTotals, KIND_REVIEW_BUNDLE,
@@ -34,12 +36,18 @@ const ID_FORMAT: &[FormatItem<'static>] =
 const BUNDLE_NAME: &str = "review_bundle.txt";
 const MANIFEST_NAME: &str = "manifest.json";
 
+/// The default single-file bundle path (repo-relative). `tmp/` is conventionally
+/// git-ignored, so a single-file bundle does not dirty the tracked tree.
+const DEFAULT_SINGLE_FILE: &str = "tmp/review_bundle.txt";
+
 /// A resolved input file: its apparent repo-relative path, the real path to read,
-/// and its content size. No file content is held at this stage.
+/// its content size, and how it was discovered. No file content is held at this stage.
 struct ScopedMeta {
     rel: String,
     real: PathBuf,
     size_bytes: u64,
+    /// Detection source for anchor discovery, or `None` for explicit-files mode.
+    source: Option<String>,
 }
 
 pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
@@ -47,32 +55,53 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
     let root_canon = fs::canonicalize(&root)
         .map_err(|e| AikitError::other(format!("failed to resolve repo root: {e}")))?;
 
-    // Determine the input mode and the list of input path strings. The CLI enforces
-    // exactly one of --files / --anchor, so the bundle pipeline below is identical
-    // regardless of mode — only the source of the path list differs.
+    // Layer config files, then apply CLI flags (highest precedence). Defaults preserve
+    // legacy behavior: a per-review directory with review_bundle.txt + manifest.json.
+    let mut cfg = config::load(&root)?;
+    cfg.apply_overrides(
+        args.single_file,
+        args.embed_manifest,
+        args.no_sidecar_manifest,
+        args.include_ignored_batch_files,
+        args.output.as_deref(),
+    );
+
+    // Determine the input mode and the (path, detection-source) list. The CLI enforces
+    // exactly one of --files / --anchor.
     let mut inputs = ReviewInputs {
         mode: "explicit_files".to_string(),
         anchor_path: None,
         anchor_id: None,
+        enhanced_discovery: None,
         files: Vec::new(),
     };
-    let input_paths: Vec<String> = if let Some(anchor) = &args.anchor {
-        // Anchor mode: validate the anchor and compute the changed files since it,
-        // reusing the same logic as `batch changed` (missing/invalid/cross-repo
-        // anchors surface the same blocked states).
-        let (anchor_id, paths) = crate::batch::changed_files_since_anchor(&root, anchor)?;
+    let mut deletions: Vec<DiscoveredFile> = Vec::new();
+    let mut discovery_notes: Vec<String> = Vec::new();
+
+    let input_specs: Vec<(String, Option<String>)> = if let Some(anchor) = &args.anchor {
+        // Anchor mode is timestamp-based: files whose filesystem mtime is newer than the
+        // anchor file (see `batch::discover_for_bundle`). It does NOT use `git status`,
+        // so pre-existing files that are merely dirty vs HEAD are excluded. Every file
+        // records the `anchor_mtime` detection source. Deleted files are out of scope.
+        let disc = crate::batch::discover_for_bundle(&root, anchor, &cfg)?;
         inputs.mode = "changed_since_anchor".to_string();
         inputs.anchor_path = Some(anchor.clone());
-        inputs.anchor_id = Some(anchor_id);
-        paths
+        inputs.anchor_id = Some(disc.anchor_id);
+        inputs.enhanced_discovery = Some(cfg.include_ignored_batch_files);
+        deletions = disc.deletions;
+        discovery_notes = disc.notes;
+        disc.files
+            .into_iter()
+            .map(|f| (f.path, Some(f.source)))
+            .collect()
     } else {
-        args.files.clone()
+        args.files.iter().map(|f| (f.clone(), None)).collect()
     };
 
     // First pass: resolve, validate, collect metadata, de-duplicate. No content read.
     let mut metas: Vec<ScopedMeta> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
-    for input in &input_paths {
+    for (input, source) in &input_specs {
         let (rel, real) = resolve_input(&root_canon, input)?;
         if seen.contains(&rel) {
             continue; // dedupe: every scoped file appears exactly once
@@ -90,6 +119,7 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
             rel,
             real,
             size_bytes,
+            source: source.clone(),
         });
     }
 
@@ -101,51 +131,351 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
     let review_id = format!("{}-{}", format_ts(now, ID_FORMAT), short_head(&head));
     let generated_at = format_ts(now, TS_FORMAT);
 
-    // Resolve output directory (relative --output is taken under the repo root).
-    let selected = output::select_output_root(&root, args.output.as_deref());
+    // Resolve the output target up front so we can fail clearly before writing anything.
+    let target = resolve_output_target(&root, &root_canon, &cfg, &review_id)?;
+
+    let limits = ReviewLimits {
+        max_file_bytes: args.max_file_bytes,
+        max_total_bytes: args.max_total_bytes,
+        max_file_lines: args.max_file_lines,
+    };
+    let resolved_inputs = ReviewInputs {
+        files: metas.iter().map(|m| m.rel.clone()).collect(),
+        ..inputs
+    };
+
+    if cfg.embed_manifest {
+        write_buffered(
+            &root,
+            &target,
+            &cfg,
+            &metas,
+            &deletions,
+            &args,
+            &head,
+            &generated_at,
+            &review_id,
+            resolved_inputs,
+            limits,
+        )
+    } else {
+        write_streamed(
+            &root,
+            &target,
+            &cfg,
+            &metas,
+            &deletions,
+            &args,
+            &head,
+            &generated_at,
+            &review_id,
+            resolved_inputs,
+            limits,
+            &discovery_notes,
+        )
+    }
+}
+
+/// Where the bundle (and optional sidecar) will be written.
+struct OutputTarget {
+    /// Absolute path of the bundle file to write.
+    bundle: PathBuf,
+    /// Absolute path of the sidecar manifest, when one is to be written.
+    sidecar: Option<PathBuf>,
+    /// Repo-relative bundle path recorded in the manifest's `bundle_path`.
+    bundle_rel: String,
+}
+
+/// Resolve and prepare the output location, creating parent directories. Fails clearly
+/// when the requested contract cannot be satisfied (escape, or a directory in the way).
+fn resolve_output_target(
+    root: &Path,
+    root_canon: &Path,
+    cfg: &ResolvedConfig,
+    review_id: &str,
+) -> Result<OutputTarget, AikitError> {
+    if cfg.single_file {
+        let requested = cfg.output.as_deref().unwrap_or(DEFAULT_SINGLE_FILE);
+        let (bundle, bundle_rel) = resolve_in_repo_file(root_canon, requested)?;
+        if bundle.is_dir() {
+            return Err(AikitError::other(format!(
+                "single-file output path is a directory: {requested}"
+            )));
+        }
+        if let Some(parent) = bundle.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                AikitError::other(format!(
+                    "failed to create output dir {}: {e}",
+                    parent.display()
+                ))
+            })?;
+        }
+        return Ok(OutputTarget {
+            bundle,
+            sidecar: None,
+            bundle_rel,
+        });
+    }
+
+    // Directory mode: <output-root>/reviews/<review-id>/.
+    let selected = output::select_output_root(root, cfg.output.as_deref());
     let out_root = if selected.is_absolute() {
         selected
     } else {
         root.join(selected)
     };
-    let dir = output::reviews_dir(&out_root).join(&review_id);
+    let dir = output::reviews_dir(&out_root).join(review_id);
     fs::create_dir_all(&dir).map_err(|e| {
         AikitError::other(format!(
             "failed to create output dir {}: {e}",
             dir.display()
         ))
     })?;
+    let bundle = dir.join(BUNDLE_NAME);
+    let sidecar = if cfg.sidecar_manifest {
+        Some(dir.join(MANIFEST_NAME))
+    } else {
+        None
+    };
+    Ok(OutputTarget {
+        bundle,
+        sidecar,
+        bundle_rel: BUNDLE_NAME.to_string(),
+    })
+}
 
-    // Second pass: hash, apply caps, write the bundle incrementally, build manifest.
-    let bundle_path = dir.join(BUNDLE_NAME);
-    let manifest_path = dir.join(MANIFEST_NAME);
-    let mut bundle = BufWriter::new(File::create(&bundle_path).map_err(|e| {
-        AikitError::other(format!("failed to write {}: {e}", bundle_path.display()))
+/// Resolve a repo-relative-or-absolute output file path, rejecting escapes. Returns the
+/// absolute path and the repo-relative form. The target need not exist yet.
+fn resolve_in_repo_file(root_canon: &Path, input: &str) -> Result<(PathBuf, String), AikitError> {
+    let raw = PathBuf::from(input);
+    let candidate = if raw.is_absolute() {
+        raw
+    } else {
+        root_canon.join(&raw)
+    };
+    let lexical = lexical_normalize(&candidate);
+    let rel = lexical.strip_prefix(root_canon).map_err(|_| {
+        AikitError::blocked(
+            blocked::PATH_ESCAPE,
+            format!("output path resolves outside the repository: {input}"),
+        )
+    })?;
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    if rel.is_empty() {
+        return Err(AikitError::blocked(
+            blocked::PATH_ESCAPE,
+            format!("output path must name a file inside the repository: {input}"),
+        ));
+    }
+
+    // Defend against a symlinked ancestor (e.g. `tmp` -> /outside): canonicalize the
+    // nearest existing ancestor and confirm the real path stays inside the repository.
+    // The lexical check above only catches `..`/absolute escapes, not symlink escapes.
+    let mut ancestor = lexical.as_path();
+    let real_ancestor = loop {
+        if let Ok(c) = fs::canonicalize(ancestor) {
+            break Some(c);
+        }
+        match ancestor.parent() {
+            Some(p) => ancestor = p,
+            None => break None,
+        }
+    };
+    if let Some(real) = real_ancestor {
+        if !real.starts_with(root_canon) {
+            return Err(AikitError::blocked(
+                blocked::PATH_ESCAPE,
+                format!("output path resolves (via symlink) outside the repository: {input}"),
+            ));
+        }
+    }
+
+    Ok((lexical, rel))
+}
+
+/// Build the manifest from processed file entries.
+#[allow(clippy::too_many_arguments)]
+fn build_manifest(
+    review_id: &str,
+    repo_root: &str,
+    head: &str,
+    generated_at: &str,
+    inputs: ReviewInputs,
+    limits: ReviewLimits,
+    files: Vec<ReviewFile>,
+    bundle_rel: &str,
+    embedded: bool,
+    sidecar: bool,
+    bytes_included: u64,
+) -> ReviewManifest {
+    let totals = ReviewTotals {
+        files_total: files.len(),
+        files_included: files.iter().filter(|f| f.included).count(),
+        files_omitted: files.iter().filter(|f| !f.included).count(),
+        bytes_included,
+    };
+    ReviewManifest {
+        schema_version: SCHEMA_VERSION,
+        kind: KIND_REVIEW_BUNDLE.to_string(),
+        review_id: review_id.to_string(),
+        repo_root: repo_root.to_string(),
+        git_head: head.to_string(),
+        aikit_version: env!("CARGO_PKG_VERSION").to_string(),
+        generated_at: generated_at.to_string(),
+        inputs,
+        limits,
+        files,
+        bundle_path: bundle_rel.to_string(),
+        embedded_manifest: embedded,
+        sidecar_manifest: sidecar,
+        totals,
+    }
+}
+
+/// Streaming path (default, no embedded manifest): write the bundle incrementally to
+/// disk (bounded memory) and an optional sidecar manifest.json.
+#[allow(clippy::too_many_arguments)]
+fn write_streamed(
+    root: &Path,
+    target: &OutputTarget,
+    _cfg: &ResolvedConfig,
+    metas: &[ScopedMeta],
+    deletions: &[DiscoveredFile],
+    args: &ReviewGenerateArgs,
+    head: &str,
+    generated_at: &str,
+    review_id: &str,
+    inputs: ReviewInputs,
+    limits: ReviewLimits,
+    notes: &[String],
+) -> Result<(), AikitError> {
+    let mut bundle = BufWriter::new(File::create(&target.bundle).map_err(|e| {
+        AikitError::other(format!("failed to write {}: {e}", target.bundle.display()))
     })?);
-    write_bundle_header(
-        &mut bundle,
-        &root.display().to_string(),
-        &head,
-        &generated_at,
-    )
-    .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+    write_bundle_header(&mut bundle, &root.display().to_string(), head, generated_at)
+        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+    writeln!(bundle, "\n## Files")
+        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
 
+    let (mut files, bytes_included) = write_file_sections(&mut bundle, metas, args)?;
+    write_deletions_section(&mut bundle, deletions)
+        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+    append_deletion_entries(&mut files, deletions);
+
+    bundle
+        .flush()
+        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+
+    let manifest = build_manifest(
+        review_id,
+        &root.display().to_string(),
+        head,
+        generated_at,
+        inputs,
+        limits,
+        files,
+        &target.bundle_rel,
+        false,
+        target.sidecar.is_some(),
+        bytes_included,
+    );
+
+    let mut written = vec![display_relative(root, &target.bundle)];
+    if let Some(sidecar) = &target.sidecar {
+        let json = serde_json::to_string_pretty(&manifest)
+            .map_err(|e| AikitError::other(format!("failed to serialize manifest: {e}")))?;
+        write_with_newline(sidecar, &json)?;
+        written.push(display_relative(root, sidecar));
+    }
+
+    report(&manifest, &written, args.json, notes)
+}
+
+/// Buffered path (embedded manifest and/or single-file): process files into memory,
+/// build the manifest, then write the bundle as header + embedded manifest + contents.
+#[allow(clippy::too_many_arguments)]
+fn write_buffered(
+    root: &Path,
+    target: &OutputTarget,
+    _cfg: &ResolvedConfig,
+    metas: &[ScopedMeta],
+    deletions: &[DiscoveredFile],
+    args: &ReviewGenerateArgs,
+    head: &str,
+    generated_at: &str,
+    review_id: &str,
+    inputs: ReviewInputs,
+    limits: ReviewLimits,
+) -> Result<(), AikitError> {
+    let mut body: Vec<u8> = Vec::new();
+    let (mut files, bytes_included) = write_file_sections(&mut body, metas, args)?;
+    write_deletions_section(&mut body, deletions)
+        .map_err(|e| AikitError::other(format!("failed to build bundle: {e}")))?;
+    append_deletion_entries(&mut files, deletions);
+
+    let manifest = build_manifest(
+        review_id,
+        &root.display().to_string(),
+        head,
+        generated_at,
+        inputs,
+        limits,
+        files,
+        &target.bundle_rel,
+        true,
+        target.sidecar.is_some(),
+        bytes_included,
+    );
+    let manifest_json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| AikitError::other(format!("failed to serialize manifest: {e}")))?;
+
+    let mut bundle = BufWriter::new(File::create(&target.bundle).map_err(|e| {
+        AikitError::other(format!("failed to write {}: {e}", target.bundle.display()))
+    })?);
+    write_bundle_header(&mut bundle, &root.display().to_string(), head, generated_at)
+        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+    write_embedded_manifest(&mut bundle, &manifest_json)
+        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+    writeln!(bundle, "\n## Files")
+        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+    bundle
+        .write_all(&body)
+        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+    bundle
+        .flush()
+        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+
+    let mut written = vec![display_relative(root, &target.bundle)];
+    if let Some(sidecar) = &target.sidecar {
+        // Embedded but still requested: write the sidecar too (directory mode only).
+        write_with_newline(sidecar, &manifest_json)?;
+        written.push(display_relative(root, sidecar));
+    }
+
+    report(&manifest, &written, args.json, &[])
+}
+
+/// Process metas: hash, apply caps, write each `### file` section to `bundle`. Returns
+/// the per-file manifest entries (excluding deletions) and the total bytes included.
+fn write_file_sections<W: Write>(
+    bundle: &mut W,
+    metas: &[ScopedMeta],
+    args: &ReviewGenerateArgs,
+) -> Result<(Vec<ReviewFile>, u64), AikitError> {
     let mut files: Vec<ReviewFile> = Vec::with_capacity(metas.len());
     let mut running_total: u64 = 0;
     let mut total_cap_reached = false;
 
-    for m in &metas {
+    for m in metas {
         let sha = stream_sha256(&m.real)?;
 
-        // Once the total cap is reached, this and every later file is omitted.
         if total_cap_reached {
-            write_omitted_section(&mut bundle, &m.rel, &sha, m.size_bytes)
+            write_omitted_section(bundle, &m.rel, &sha, m.size_bytes)
                 .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
             files.push(omitted_entry(m, sha));
             continue;
         }
 
-        // Read only the capped prefix (bounded by --max-file-bytes when set).
         let (embedded, truncated, file_cap) = read_capped(
             &m.real,
             m.size_bytes,
@@ -157,22 +487,15 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
 
         if matches!(args.max_total_bytes, Some(cap) if running_total + bytes_included > cap) {
             total_cap_reached = true;
-            write_omitted_section(&mut bundle, &m.rel, &sha, m.size_bytes)
+            write_omitted_section(bundle, &m.rel, &sha, m.size_bytes)
                 .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
             files.push(omitted_entry(m, sha));
             continue;
         }
 
         running_total += bytes_included;
-        write_included_section(
-            &mut bundle,
-            &m.rel,
-            &sha,
-            m.size_bytes,
-            truncated,
-            &embedded,
-        )
-        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+        write_included_section(bundle, &m.rel, &sha, m.size_bytes, truncated, &embedded)
+            .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
         files.push(ReviewFile {
             path: m.rel.clone(),
             size_bytes: m.size_bytes,
@@ -183,59 +506,47 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
             bytes_included,
             omitted_reason: None,
             cap_hit: file_cap,
+            source: m.source.clone(),
         });
     }
 
-    bundle
-        .flush()
-        .map_err(|e| AikitError::other(format!("failed to write bundle: {e}")))?;
+    Ok((files, running_total))
+}
 
-    let totals = ReviewTotals {
-        files_total: files.len(),
-        files_included: files.iter().filter(|f| f.included).count(),
-        files_omitted: files.iter().filter(|f| !f.included).count(),
-        bytes_included: running_total,
-    };
+/// Append recorded tracked deletions to the manifest file list (manifest-only, never
+/// bundled — a deleted file has no content to include).
+fn append_deletion_entries(files: &mut Vec<ReviewFile>, deletions: &[DiscoveredFile]) {
+    for d in deletions {
+        files.push(ReviewFile {
+            path: d.path.clone(),
+            size_bytes: 0,
+            sha256: String::new(),
+            included: false,
+            truncated: false,
+            lines_included: 0,
+            bytes_included: 0,
+            omitted_reason: Some("deleted".to_string()),
+            cap_hit: None,
+            source: Some(d.source.clone()),
+        });
+    }
+}
 
-    let manifest = ReviewManifest {
-        schema_version: SCHEMA_VERSION,
-        kind: KIND_REVIEW_BUNDLE.to_string(),
-        review_id,
-        repo_root: root.display().to_string(),
-        git_head: head,
-        generated_at,
-        inputs: ReviewInputs {
-            files: metas.iter().map(|m| m.rel.clone()).collect(),
-            ..inputs
-        },
-        limits: ReviewLimits {
-            max_file_bytes: args.max_file_bytes,
-            max_total_bytes: args.max_total_bytes,
-            max_file_lines: args.max_file_lines,
-        },
-        files,
-        bundle_path: BUNDLE_NAME.to_string(),
-        totals,
-    };
-
-    // The on-disk manifest.json stays a pure, reproducible artifact (it does not
-    // embed its own location). The created paths are reported separately.
-    let json = serde_json::to_string_pretty(&manifest)
-        .map_err(|e| AikitError::other(format!("failed to serialize manifest: {e}")))?;
-    write_with_newline(&manifest_path, &json)?;
-
-    let written = vec![
-        display_relative(&root, &bundle_path),
-        display_relative(&root, &manifest_path),
-    ];
-
-    if args.json {
-        // Stdout adds the created artifact paths alongside the manifest fields,
-        // without altering the on-disk artifact (mirrors `batch start`).
-        let mut value = serde_json::to_value(&manifest)
+/// Emit the human/JSON report (shared by both write paths).
+fn report(
+    manifest: &ReviewManifest,
+    written: &[String],
+    json: bool,
+    notes: &[String],
+) -> Result<(), AikitError> {
+    if json {
+        let mut value = serde_json::to_value(manifest)
             .map_err(|e| AikitError::other(format!("failed to serialize manifest: {e}")))?;
         if let Some(obj) = value.as_object_mut() {
             obj.insert("written".to_string(), serde_json::json!(written));
+            if !notes.is_empty() {
+                obj.insert("notes".to_string(), serde_json::json!(notes));
+            }
         }
         println!(
             "{}",
@@ -244,8 +555,9 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
         );
     } else {
         println!("Review bundle written:");
-        println!("  {}", display_relative(&root, &bundle_path));
-        println!("  {}", display_relative(&root, &manifest_path));
+        for w in written {
+            println!("  {w}");
+        }
         println!(
             "  {} file(s): {} included, {} omitted, {} byte(s) bundled",
             manifest.totals.files_total,
@@ -253,6 +565,9 @@ pub fn generate(args: ReviewGenerateArgs) -> Result<(), AikitError> {
             manifest.totals.files_omitted,
             manifest.totals.bytes_included
         );
+        for note in notes {
+            println!("note: {note}");
+        }
     }
     Ok(())
 }
@@ -268,6 +583,7 @@ fn omitted_entry(m: &ScopedMeta, sha: String) -> ReviewFile {
         bytes_included: 0,
         omitted_reason: Some("max_total_bytes".to_string()),
         cap_hit: Some("total_bytes".to_string()),
+        source: m.source.clone(),
     }
 }
 
@@ -424,8 +740,36 @@ fn write_bundle_header<W: Write>(
     writeln!(w, "# aikit Review Bundle\n")?;
     writeln!(w, "Repo: {repo_root}")?;
     writeln!(w, "HEAD: {head}")?;
-    writeln!(w, "Generated: {generated_at}\n")?;
-    writeln!(w, "## Files")
+    writeln!(w, "Generated: {generated_at}")
+}
+
+/// Write the embedded manifest section (a fenced JSON block). The fence is sized to be
+/// longer than any backtick run in the manifest JSON (which has none, but stay safe).
+fn write_embedded_manifest<W: Write>(w: &mut W, manifest_json: &str) -> std::io::Result<()> {
+    writeln!(w, "\n## Manifest")?;
+    let fence = "`".repeat(fence_len(manifest_json));
+    writeln!(w, "{fence}json")?;
+    w.write_all(manifest_json.as_bytes())?;
+    if !manifest_json.ends_with('\n') {
+        writeln!(w)?;
+    }
+    writeln!(w, "{fence}")
+}
+
+/// Write a section listing tracked deletions recorded for the manifest. Deleted files
+/// have no content to bundle; this section is informational. Omitted when empty.
+fn write_deletions_section<W: Write>(
+    w: &mut W,
+    deletions: &[DiscoveredFile],
+) -> std::io::Result<()> {
+    if deletions.is_empty() {
+        return Ok(());
+    }
+    writeln!(w, "\n## Deletions (recorded, not bundled)")?;
+    for d in deletions {
+        writeln!(w, "- {} ({})", d.path, d.source)?;
+    }
+    Ok(())
 }
 
 fn write_included_section<W: Write>(

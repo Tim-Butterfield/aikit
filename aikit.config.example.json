@@ -1,0 +1,44 @@
+{
+  "_comment": "Example aikit configuration. Copy to aikit.config.json (repo root) or .aikit/config.json and edit. Precedence: built-in defaults < aikit.config.json < .aikit/config.json < CLI flags. All keys are optional; defaults preserve the legacy review-bundle behavior. This example file itself is NOT loaded by aikit (only aikit.config.json / .aikit/config.json are).",
+
+  "bundle": {
+    "_comment": "single_file=true writes one bundle file with the manifest embedded and no review directory or sidecar manifest.json; then `output` is the bundle FILE path (default tmp/review_bundle.txt). When single_file=false (directory mode), `output` is the output ROOT directory (default .aikit/outputs) and is omitted here.",
+    "single_file": false,
+    "embed_manifest": false,
+    "sidecar_manifest": true
+  },
+
+  "discovery": {
+    "_comment": "Enhanced anchor discovery. include_globs allowlists otherwise-ignored files to pull in (matched by path; protective default excludes always apply and exclude_globs adds more). include_files are explicit paths always bundled when present.",
+    "include_ignored_batch_files": false,
+    "include_globs": [
+      "tmp/review-batch/**",
+      "**/*.generated.json"
+    ],
+    "exclude_globs": [
+      "**/*.lock",
+      "coverage/**"
+    ],
+    "include_files": [
+      "CHANGELOG.md"
+    ]
+  },
+
+  "script_runner": {
+    "_comment": "Cross-OS runner detection for `aikit script run/check`. Selection order: explicit --runner > extension_map (below) > shebang (when detect_from_shebang) > built-in extension map > OS-aware fallback. preferred_runners reorders candidates globally. extension_map keys are extensions (with leading dot); values are candidate runner names tried in order. An empty extension_map uses the built-in defaults.",
+    "preferred_runners": [
+      "pwsh", "powershell", "cmd", "python3", "python", "node", "zsh", "bash", "sh"
+    ],
+    "detect_from_shebang": true,
+    "detect_from_extension": true,
+    "extension_map": {
+      ".sh": ["bash", "sh"],
+      ".zsh": ["zsh"],
+      ".ps1": ["pwsh", "powershell"],
+      ".cmd": ["cmd"],
+      ".bat": ["cmd"],
+      ".py": ["python3", "python"],
+      ".js": ["node"]
+    }
+  }
+}

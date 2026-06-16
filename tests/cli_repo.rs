@@ -100,6 +100,39 @@ fn repo_doctor_help_says_read_only() {
         .stdout(predicates::str::contains("creates no files"));
 }
 
+#[test]
+fn repo_doctor_help_describes_runner_availability() {
+    let out = AssertCommand::new(cargo_bin("aikit"))
+        .args(["repo", "doctor", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8_lossy(&out);
+    // Must describe the runner-availability model.
+    assert!(
+        help.contains("runner"),
+        "repo doctor --help should mention runner availability"
+    );
+    assert!(
+        help.contains("any_runner_available") || help.contains("runners"),
+        "repo doctor --help should reference the runners/any_runner_available fields"
+    );
+    // Must not present /bin/sh + /bin/zsh as readiness-gating interpreters.
+    assert!(
+        !help.contains("supported interpreters (`/bin/sh`, `/bin/zsh`)"),
+        "repo doctor --help still presents /bin/sh + /bin/zsh as gating interpreters"
+    );
+    // If the legacy shells are mentioned at all, they must be framed as informational.
+    if help.contains("/bin/zsh") {
+        assert!(
+            help.contains("informational"),
+            "legacy /bin/sh,/bin/zsh probes must be labeled informational"
+        );
+    }
+}
+
 // ---- repo init ----
 
 #[test]
@@ -267,14 +300,61 @@ fn doctor_reports_not_ready_before_init_and_ready_after() {
     assert_eq!(after["temp_dir_exists"], true);
     assert_eq!(after["aikit_ignored"], true);
     assert_eq!(after["ignore_source"], ".git/info/exclude");
-    // On this host /bin/sh and /bin/zsh both exist, so the repo is ready after init.
-    if after["interpreters"]
-        .as_array()
-        .unwrap()
+    // Readiness now depends on at least one supported runner being available for this
+    // OS (not on any specific Unix shell). It does NOT require /bin/zsh.
+    assert_eq!(after["any_runner_available"], true);
+    assert_eq!(after["ready"], true);
+}
+
+#[test]
+fn doctor_reports_runner_availability_not_just_shells() {
+    let repo = init_repo();
+    let p = repo.path();
+    aikit(p).args(["repo", "init"]).assert().success();
+    let json = json_out(p, &["repo", "doctor"]);
+
+    // Runner availability is reported for every supported runner.
+    let runners = json["runners"].as_array().expect("runners array present");
+    let names: Vec<&str> = runners
         .iter()
-        .all(|i| i["exists"] == true)
-    {
-        assert_eq!(after["ready"], true);
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    for expected in [
+        "sh",
+        "bash",
+        "zsh",
+        "pwsh",
+        "powershell",
+        "cmd",
+        "python3",
+        "python",
+        "node",
+    ] {
+        assert!(names.contains(&expected), "runners missing {expected}");
+    }
+    // Each entry carries availability + applicability booleans.
+    for r in runners {
+        assert!(r["available"].is_boolean());
+        assert!(r["applicable"].is_boolean());
+    }
+    assert!(json["any_runner_available"].is_boolean());
+
+    // The legacy interpreters field is retained for compatibility (informational).
+    assert!(json["interpreters"].is_array());
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_readiness_does_not_require_zsh_on_unix() {
+    let repo = init_repo();
+    let p = repo.path();
+    aikit(p).args(["repo", "init"]).assert().success();
+    let json = json_out(p, &["repo", "doctor"]);
+    // On Unix, /bin/sh provides a baseline runner, so the repo is ready regardless of
+    // whether zsh is present (zsh is optional unless a zsh script is selected).
+    if std::path::Path::new("/bin/sh").exists() {
+        assert_eq!(json["any_runner_available"], true);
+        assert_eq!(json["ready"], true);
     }
 }
 

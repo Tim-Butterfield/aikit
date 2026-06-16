@@ -78,6 +78,30 @@ alias (see the implementation plan's post-initial command-shape correction).
 - capture a run record;
 - propagate the script's exit code unless `aikit` blocks first.
 
+**Cross-OS runner detection.** The interpreter/runner is selected deterministically and
+is OS-aware. Supported extensions: `.sh`, `.zsh`, `.ps1`, `.cmd`, `.bat`, `.py`, `.js`.
+Symbolic runner names: `sh`, `zsh`, `bash`, `pwsh`, `powershell`, `cmd`, `python`,
+`python3`, `node`. Selection order:
+
+1. explicit `--runner <name>`;
+2. config `script_runner.extension_map` for the extension;
+3. a recognized `#!` shebang (unless `--no-shebang` or `detect_from_shebang=false`);
+4. the built-in extension map;
+5. an OS-aware default fallback (candidate resolution itself filters by OS and PATH);
+6. a clear blocked failure.
+
+`script_runner.preferred_runners` reorders candidates within tiers 2/4. Command
+construction uses argv arrays (never concatenated shell strings): PowerShell uses
+`<pwsh|powershell> -NoProfile -ExecutionPolicy Bypass -File <script>`; `.cmd`/`.bat` use
+`cmd /C <script>`; Python/Node/sh/zsh/bash use `<interp> <script>`. On Windows, `.ps1`
+and `.cmd`/`.bat` run with native mechanisms (no Git Bash needed); `.sh`/`.zsh` run only
+when a discoverable interpreter exists. `run.json` records `detected_runner`,
+`detection_source`, `used_shebang`, `used_extension_map`, the resolved `interpreter`, and
+the full `argv`.
+
+The forbidden-operation scan is OS-agnostic substring matching (it is **not** a security
+sandbox), and allowed script *input* locations are unchanged by this behavior.
+
 **`aikit script check` — purpose:**
 - validate a script against the same policy without executing it;
 - report whether the policy accepts the script, and the blocked state when it does not.
@@ -85,11 +109,13 @@ alias (see the implementation plan's post-initial command-shape correction).
 **`aikit script check` — initial behavior:**
 - detect repo root;
 - resolve/canonicalize the script path and validate the allowed location, path/symlink
-  boundary, and extension/interpreter;
+  boundary, and runner detection (same order as `script run`);
 - run the best-effort forbidden-operation scan;
 - apply the clean-tree policy;
 - do not execute the script, do not copy it, and create no run output (no run
   directory, `stdout.txt`, `stderr.txt`, or `run.json`);
+- report the detection metadata (`detected_runner`, `detection_source`, `used_shebang`,
+  `used_extension_map`, `argv`) in the `--json` report;
 - exit 0 when the policy accepts the script and exit 3 with the named blocked state when
   it does not.
 
@@ -98,24 +124,37 @@ alias (see the implementation plan's post-initial command-shape correction).
 **Purpose:**
 - create a batch anchor before AI-agent work begins.
 
-**Initial behavior:**
-- write anchor metadata;
-- include a timestamp;
+**Behavior:**
+- write a **minimal timestamp-reference** anchor; the anchor does NOT capture Git status
+  (`git_status_porcelain` is not recorded), because anchor-based changed-file discovery is
+  timestamp-based against the anchor file's mtime;
+- include a timestamp (`created_at` / `filesystem_anchor_time`, UTC);
 - include the repo root;
-- include the current HEAD;
-- include a current Git status summary;
+- include the current HEAD and branch (identifying metadata, not working-tree status);
+- include the aikit version that created the anchor (`aikit_version`);
+- with `--snapshot`, include an optional initial snapshot of tracked files
+  (`initial_snapshot`; off by default and never a full repo content scan);
 - output the anchor path.
 
 ### 5.3 `aikit batch changed`
 
 **Purpose:**
-- report files created or modified since a batch anchor.
+- report existing files modified since a batch anchor.
 
-**Initial behavior:**
-- read the anchor;
-- compare filesystem mtimes and/or Git state;
-- produce a deterministic changed-file list;
-- support human-readable and machine-readable output later.
+**Behavior (timestamp-based):**
+- read the anchor; the reference point is the anchor **file's** filesystem mtime;
+- report existing repo files whose filesystem mtime is newer than the anchor;
+- do **not** consult `git status`: tracked/untracked/staged/unstaged status is not the
+  deciding factor. A file that is dirty relative to `HEAD` but was last modified before
+  the anchor is excluded; a file modified after the anchor is reported whether or not it
+  is tracked. A clean Git tree is not required;
+- deleted files are out of scope (no content exists on disk to bundle);
+- honor `.gitignore`/`.git/info/exclude`, hard-exclude aikit's own areas (`.git/`,
+  `.aikit/`, `.scratch/`, `.claude/`) and configured build/dependency directories, apply
+  configured include/exclude globs, never follow symlink escapes;
+- produce a deterministic, repo-relative, sorted list (status `modified`, source
+  `anchor_mtime`); `--hash` adds a SHA-256; `--json` for machine output. mtime is a
+  best-effort heuristic.
 
 ### 5.4 `aikit review generate`
 
@@ -123,21 +162,59 @@ alias (see the implementation plan's post-initial command-shape correction).
 - generate a bounded review bundle for AI/human review.
 
 **Initial behavior:**
-- accept explicit files, changed files from an anchor, or configured include lists;
-- include file paths;
-- include SHA-256 hashes;
-- include sizes;
+- accept explicit files (`--files`) or files changed since an anchor (`--anchor`);
+- in anchor mode, use the **same timestamp-based discovery as `batch changed`** (existing
+  files whose filesystem mtime is newer than the anchor file; not `git status`; dirty-vs-
+  `HEAD`-but-older-than-anchor files are excluded; deleted files out of scope; no clean
+  tree required);
+- include file paths, SHA-256 hashes (hashed only for files actually included), sizes;
 - include line counts where practical;
-- apply byte/line caps;
-- report truncation;
+- apply byte/line caps and report truncation;
 - include repo metadata.
 
-**Output convention:**
+**Output convention (default, unchanged):**
 - each bundle writes two files under `.aikit/outputs/reviews/<review-id>/`: the readable
   text bundle `review_bundle.txt` and `manifest.json` (whose `bundle_path` records
   `review_bundle.txt`). The text bundle was renamed from the historical
   `run_for_review.txt` in a post-initial cleanup; older local review outputs may still
   carry the old name, but new generation uses `review_bundle.txt` and never writes both.
+
+**Single-file / embedded-manifest output (opt-in):**
+- `--single-file` writes exactly one bundle file with the manifest embedded (a fenced
+  `## Manifest` JSON block followed by `## Files`), no review directory, and no sidecar
+  `manifest.json` (default path `tmp/review_bundle.txt`; override with `--output <file>`).
+  The contract fails clearly when it cannot be satisfied (path escape, or a directory in
+  the way).
+- `--embed-manifest` embeds the manifest without changing the directory layout;
+  `--no-sidecar-manifest` suppresses the sidecar `manifest.json` in directory mode.
+- the manifest gains `embedded_manifest` / `sidecar_manifest` flags recording the shape.
+
+**Enhanced anchor discovery (opt-in):**
+- the default timestamp walk honors `.gitignore`, so ignored files are skipped (untracked
+  non-ignored files modified after the anchor are already included by default).
+- `--include-ignored-batch-files` (or config) additionally pulls in **allowlisted ignored**
+  files modified after the anchor (per `include_globs` minus the exclude globs).
+- protective default excludes (`**/.git/**`, `.aikit/outputs/{raw,provider,secrets}/**`,
+  `**/node_modules/**`, `**/target/**`, `**/dist/**`, `**/build/**`) are always applied
+  and can only be added to via `exclude_globs`; aikit's own areas (`.git/`, `.aikit/`,
+  `.scratch/`, `.claude/`) are hard-excluded. Dependency/build directory names are matched
+  anywhere in the tree (nested `pkg/node_modules/` is protected too). Paths that escape the
+  repo are never included.
+
+**Manifest detection source.** In anchor mode every included file records the
+timestamp-based source `anchor_mtime` (never `git_status`); configured `include_files`
+record `explicit`. Explicit-files mode (`--files`) has no mechanical change classification,
+so `source` is omitted/null there — aikit does not invent a classification it cannot derive
+deterministically. Deleted files are out of scope and produce no manifest entry. The
+manifest also records the generating `aikit_version`.
+
+**Configuration:**
+- defaults for the options above may be set in `aikit.config.json` (repo root) or
+  `.aikit/config.json`, with precedence: built-in defaults < `aikit.config.json` <
+  `.aikit/config.json` < CLI flags. Keys: `bundle.{single_file, embed_manifest,
+  sidecar_manifest, output}` and `discovery.{include_ignored_batch_files, include_globs,
+  exclude_globs, include_files}`. Malformed config fails clearly. See
+  `aikit.config.example.json`.
 
 ### 5.5 `aikit inventory repo`
 
@@ -178,10 +255,19 @@ uses the same noun-family / action grammar as the rest of the CLI.
   `.aikit/outputs/`, `.gitignore`, or `.git/info/exclude`;
 - report repo root, branch, HEAD, tracked clean/dirty state, `.aikit/` `.aikit/temp/`
   `.aikit/outputs/` existence, ignore status and source, the default output root, allowed
-  script input locations, interpreter availability (`/bin/sh`, `/bin/zsh`), the version,
-  warnings, and an overall readiness summary (with `--json`);
-- exit 0 when a repository is found, even with warnings; treat missing `.aikit/temp/` or
-  ignore coverage as warnings rather than failures.
+  script input locations, the version, warnings, and an overall readiness summary (with
+  `--json`);
+- report **runner availability** (`runners`) for every supported runner (`sh`, `bash`,
+  `zsh`, `pwsh`, `powershell`, `cmd`, `python3`, `python`, `node`), each with `available`
+  and `applicable` (OS-applicability) flags, plus `any_runner_available`. Runner
+  availability mirrors `policy::script` and is deterministic per OS. The legacy
+  `interpreters` field (`/bin/sh`, `/bin/zsh`) is retained as informational only;
+- **readiness** = sane local aikit state (temp dir present, `.aikit/` ignored) **and** at
+  least one supported runner available for the current OS. It does not require any
+  specific Unix shell, so Windows is ready with `pwsh`/`cmd` and a host without `zsh` is
+  still ready; `zsh` is optional unless a `.zsh` script is actually selected;
+- exit 0 when a repository is found, even with warnings; treat missing `.aikit/temp/`,
+  ignore coverage, or no available runner as warnings rather than failures.
 
 ### 5.7 `aikit output list` / `aikit output show` / `aikit output clean`
 
@@ -248,7 +334,7 @@ advance workflow state, perform semantic review, create review bundles, or touch
   `blocked_missing_base_commit`;
 - generate a deterministic `git diff <base>` against the current working tree (committed
   changes since the anchor plus current tracked worktree/index changes); untracked file
-  contents are not included (callers use `batch changed --include-untracked`);
+  contents are not included (callers use `batch changed` for a timestamp-based file list);
 - create no review bundle or output artifact; never touch remotes; support `--stat`
   (included by default), `--patch`, and `--json`.
 
@@ -269,8 +355,10 @@ by default; both prefer stdout plus `--json`.
   `.aikit/` ignore status); when outside a repo, still report the non-repo facts and record
   a warning (repo facts `null`);
 - also report the aikit version, current executable, OS family, CPU architecture, working
-  directory, interpreter availability (`/bin/sh`, `/bin/zsh`), local git/Rust/Cargo
-  versions, and the shell from `$SHELL`;
+  directory, **legacy/informational shell-interpreter probes** (`/bin/sh`, `/bin/zsh`),
+  local git/Rust/Cargo versions, and the shell from `$SHELL`. These shell probes are
+  informational only and are NOT the cross-OS runner-availability/readiness model that
+  `repo doctor` reports (§5.6); `env snapshot` does not report runner availability;
 - **do not** dump all environment variables, the raw `PATH`, tokens, credentials, private
   keys, SSH-agent/cloud credentials, or any provider/model-specific or network-derived
   information; `PATH` is summarized only (entry count plus an on-PATH boolean);
@@ -293,6 +381,41 @@ by default; both prefer stdout plus `--json`.
 - by default report findings and exit 0; with `--fail-on-findings`, exit 3 with
   `blocked_secret_findings` when findings are present;
 - support human output and `--json` (`kind: aikit.scan_secrets`).
+
+### 5.10 `aikit version`
+
+- report the package/binary version and build metadata;
+- `aikit --version` prints the standard clap string (`aikit <version>`); `aikit version`
+  prints a compact human report; `aikit version --json` emits `kind: aikit.version` with
+  `name`, `version`, `git_commit`, `build_profile`, `os`, `arch`, `target`, and
+  `rust_profile` (git/profile/target are best-effort build-time values and may be null);
+- read-only; creates nothing; works outside a Git repository.
+- The package version is recorded in batch anchors (`aikit_version`) and review manifests
+  (`aikit_version`), and reported by `env snapshot`.
+- **Build-metadata freshness:** `git_commit` is captured by `build.rs`, which watches
+  `.git/HEAD`, the current branch ref (`.git/refs/heads/<branch>`), and `.git/packed-refs`
+  so a normal commit refreshes it on the next build. Limitation (best-effort): detached
+  HEAD, freshly packed refs, or linked-worktree gitdir layouts may leave `git_commit`
+  stale until the next rebuild. Build metadata never fails the build when git is
+  unavailable.
+
+### 5.11 Configuration files
+
+- Optional, layered config (lowest to highest precedence): built-in defaults <
+  `aikit.config.json` (repo root) < `.aikit/config.json` < CLI flags.
+- Sections: `bundle` (`single_file`, `embed_manifest`, `sidecar_manifest`, `output`),
+  `discovery` (`include_ignored_batch_files`, `include_globs`, `exclude_globs`,
+  `include_files`), and `script_runner` (`preferred_runners`, `detect_from_shebang`,
+  `detect_from_extension`, `extension_map`). A `_comment` key is accepted (and ignored)
+  anywhere so an annotated example can be copied verbatim.
+- Protective exclude globs are always applied and can only be added to, never removed.
+- Malformed config (invalid JSON or an unknown field) fails clearly. Unknown runner names
+  in `script_runner.preferred_runners` or `script_runner.extension_map` are validated
+  before runner detection and rejected with `blocked_runner_not_allowed` (not silently
+  skipped, and not surfaced as a misleading `blocked_runner_not_found`). See
+  `aikit.config.example.json` for a generic, annotated example.
+- Version concepts are distinct: the Cargo package version (`aikit version`), and the
+  per-record `schema_version` (anchors/manifests/run records). They are never conflated.
 
 ## 6. Output Conventions
 
@@ -318,11 +441,13 @@ Blocked states are explicit, named, mechanical conditions. Examples:
 - `blocked_path_escape`;
 - `blocked_script_not_allowed`;
 - `blocked_dirty_tree`;
-- `blocked_forbidden_git_operation`;
+- `blocked_forbidden_operation`;
 - `blocked_missing_anchor`;
 - `blocked_invalid_anchor`;
 - `blocked_unreadable_file`;
-- `blocked_unsupported_mode`;
+- `blocked_unknown_script_type` (script extension/shebang yields no known runner);
+- `blocked_runner_not_found` (selected runner has no available interpreter on this OS);
+- `blocked_runner_not_allowed` (explicit `--runner` is not a recognized runner);
 - `blocked_missing_base_commit`;
 - `blocked_secret_findings`.
 
@@ -358,10 +483,15 @@ Settled during implementation (see `aikit-implementation-plan.md` and
 - crate / module structure;
 - anchor, review-bundle, inventory, and run-record formats and their JSON schemas;
 - default include/exclude rules;
-- best-effort policy scan rules.
+- best-effort policy scan rules;
+- config files and precedence (see §5.11): `aikit.config.json` and `.aikit/config.json`
+  are read, layered over built-in defaults and under CLI flags, with `bundle`,
+  `discovery`, and `script_runner` sections;
+- cross-OS script runner detection (see §5.1).
 
 Still open:
 
-- exact config format (no config file is read yet);
 - install method;
-- whether to support agent wrapper files later.
+- whether to support agent wrapper files later;
+- whether to expose a dedicated config-schema version (currently config has no separate
+  schema version; the package version and per-record `schema_version` remain distinct).

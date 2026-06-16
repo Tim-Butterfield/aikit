@@ -17,13 +17,18 @@ pub mod blocked {
     pub const PATH_ESCAPE: &str = "blocked_path_escape";
     pub const UNREADABLE_FILE: &str = "blocked_unreadable_file";
     pub const SCRIPT_NOT_ALLOWED: &str = "blocked_script_not_allowed";
-    pub const UNSUPPORTED_MODE: &str = "blocked_unsupported_mode";
     pub const DIRTY_TREE: &str = "blocked_dirty_tree";
     pub const FORBIDDEN_OPERATION: &str = "blocked_forbidden_operation";
     pub const ARTIFACT_NOT_FOUND: &str = "blocked_artifact_not_found";
     pub const AMBIGUOUS_ARTIFACT: &str = "blocked_ambiguous_artifact";
     pub const MISSING_BASE_COMMIT: &str = "blocked_missing_base_commit";
     pub const SECRET_FINDINGS: &str = "blocked_secret_findings";
+    /// A script's extension is unknown and no other runner signal (explicit/shebang) applied.
+    pub const UNKNOWN_SCRIPT_TYPE: &str = "blocked_unknown_script_type";
+    /// A runner was selected but its program is not installed/available on this OS.
+    pub const RUNNER_NOT_FOUND: &str = "blocked_runner_not_found";
+    /// An explicit `--runner` named a value that is not a recognized runner.
+    pub const RUNNER_NOT_ALLOWED: &str = "blocked_runner_not_allowed";
 }
 
 #[derive(Debug, Error)]

@@ -54,6 +54,13 @@ fn write_script(repo: &Path, rel: &str, content: &str) {
     fs::write(&path, content).unwrap();
 }
 
+/// Write `.aikit/config.json` with the given JSON value.
+fn write_config(repo: &Path, value: &Value) {
+    let p = repo.join(".aikit/config.json");
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(p, serde_json::to_string_pretty(value).unwrap()).unwrap();
+}
+
 /// The single run directory under a base (default `.aikit/outputs/runs`).
 fn find_run_dir(repo: &Path, base_rel: &str) -> PathBuf {
     let base = repo.join(base_rel);
@@ -101,6 +108,49 @@ fn script_help_is_available() {
 }
 
 #[test]
+fn script_help_describes_cross_os_runner_detection() {
+    let out = AssertCommand::new(cargo_bin("aikit"))
+        .args(["script", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8_lossy(&out);
+    // New behavior must be described.
+    for needle in [
+        ".ps1",
+        ".py",
+        ".js",
+        "pwsh",
+        "powershell",
+        "cmd",
+        "node",
+        "--runner",
+        "shebang",
+        "extension_map",
+        "no Git Bash",
+        "blocked_runner_not_found",
+        "NOT a security sandbox",
+    ] {
+        assert!(help.contains(needle), "script --help missing {needle:?}");
+    }
+    // Stale claims must be gone.
+    assert!(
+        !help.contains("fixed interpreter"),
+        "script --help still says 'fixed interpreter'"
+    );
+    assert!(
+        !help.contains("never from a shebang"),
+        "script --help still says 'never from a shebang'"
+    );
+    assert!(
+        !help.contains("Only `.zsh`"),
+        "script --help still says only .zsh/.sh are supported"
+    );
+}
+
+#[test]
 fn script_run_help_states_not_a_sandbox() {
     AssertCommand::new(cargo_bin("aikit"))
         .args(["script", "run", "--help"])
@@ -109,6 +159,45 @@ fn script_run_help_states_not_a_sandbox() {
         .stdout(predicates::str::contains("--print"))
         .stdout(predicates::str::contains("--require-clean"))
         .stdout(predicates::str::contains("NOT a security sandbox"));
+}
+
+#[test]
+fn script_run_help_describes_detected_runner_not_fixed_interpreter() {
+    let out = AssertCommand::new(cargo_bin("aikit"))
+        .args(["script", "run", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8_lossy(&out);
+    assert!(
+        !help.contains("fixed interpreter"),
+        "script run --help still says 'fixed interpreter'"
+    );
+    assert!(
+        help.contains("detected runner"),
+        "script run --help should describe the detected runner"
+    );
+    // Sufficiently describes the cross-OS detected-runner behavior.
+    for needle in [
+        ".ps1",
+        ".py",
+        "pwsh",
+        "cmd",
+        "node",
+        "--runner",
+        "shebang",
+        "extension map",
+        "no Git Bash",
+        "blocked_runner_not_found",
+        "NOT a security sandbox",
+    ] {
+        assert!(
+            help.contains(needle),
+            "script run --help missing {needle:?}"
+        );
+    }
 }
 
 #[test]
@@ -200,19 +289,19 @@ fn run_extensionless_script_is_rejected() {
         .assert()
         .failure()
         .code(3)
-        .stderr(predicates::str::contains("blocked_unsupported_mode"));
+        .stderr(predicates::str::contains("blocked_unknown_script_type"));
 }
 
 #[test]
 fn run_unknown_extension_script_is_rejected() {
     let repo = init_repo();
-    write_script(repo.path(), ".aikit/temp/x.py", "print('hi')\n");
+    write_script(repo.path(), ".aikit/temp/x.xyz", "data\n");
     aikit(repo.path())
-        .args(["script", "run", ".aikit/temp/x.py"])
+        .args(["script", "run", ".aikit/temp/x.xyz"])
         .assert()
         .failure()
         .code(3)
-        .stderr(predicates::str::contains("blocked_unsupported_mode"));
+        .stderr(predicates::str::contains("blocked_unknown_script_type"));
 }
 
 #[test]
@@ -522,14 +611,19 @@ fn check_accepts_valid_sh_script() {
 
 #[test]
 fn check_accepts_valid_zsh_script_without_executing() {
-    // `script check` resolves the interpreter from the extension but never runs it,
-    // so this passes even where /bin/zsh is absent.
+    // `script check` resolves the runner (the program must be discoverable) but never
+    // runs it. Skip where no zsh is installed.
+    if !Path::new("/bin/zsh").exists() {
+        return;
+    }
     let repo = init_repo();
     write_script(repo.path(), ".aikit/temp/ok.zsh", "echo hi\n");
     let (code, json) = check_json(repo.path(), &[".aikit/temp/ok.zsh"]);
     assert_eq!(code, 0);
     assert_eq!(json["accepted"], true);
+    assert_eq!(json["detected_runner"], "zsh");
     assert_eq!(json["interpreter"], "/bin/zsh");
+    assert_eq!(json["detection_source"], "extension_map");
 }
 
 #[test]
@@ -574,16 +668,16 @@ fn check_rejects_extensionless_script() {
     write_script(repo.path(), ".aikit/temp/noext", "echo hi\n");
     let (code, json) = check_json(repo.path(), &[".aikit/temp/noext"]);
     assert_eq!(code, 3);
-    assert_eq!(json["blocked_state"], "blocked_unsupported_mode");
+    assert_eq!(json["blocked_state"], "blocked_unknown_script_type");
 }
 
 #[test]
 fn check_rejects_unknown_extension() {
     let repo = init_repo();
-    write_script(repo.path(), ".aikit/temp/x.py", "print('hi')\n");
-    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.py"]);
+    write_script(repo.path(), ".aikit/temp/x.xyz", "data\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.xyz"]);
     assert_eq!(code, 3);
-    assert_eq!(json["blocked_state"], "blocked_unsupported_mode");
+    assert_eq!(json["blocked_state"], "blocked_unknown_script_type");
 }
 
 #[test]
@@ -663,4 +757,372 @@ fn check_does_not_execute_or_create_run_output() {
         !repo.path().join(".aikit/outputs").exists(),
         "check must not create any run output"
     );
+}
+
+// ---- cross-OS runner detection ----
+
+/// Whether a program responds to `--version` (a cheap availability probe).
+fn have(program: &str) -> bool {
+    Command::new(program)
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn run_records_detection_metadata() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
+    aikit(repo.path())
+        .args(["script", "run", ".aikit/temp/h.sh"])
+        .assert()
+        .success();
+    let dir = find_run_dir(repo.path(), ".aikit/outputs/runs");
+    let json: Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("run.json")).unwrap()).unwrap();
+    assert_eq!(json["detected_runner"], "sh");
+    assert_eq!(json["detection_source"], "shebang");
+    assert_eq!(json["used_shebang"], true);
+    assert_eq!(json["used_extension_map"], false);
+    let argv = json["argv"].as_array().expect("argv array");
+    assert_eq!(argv.last().unwrap(), ".aikit/temp/h.sh");
+}
+
+#[test]
+fn run_no_shebang_uses_extension_map() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
+    let out = aikit(repo.path())
+        .args([
+            "script",
+            "run",
+            ".aikit/temp/h.sh",
+            "--no-shebang",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["detection_source"], "extension_map");
+    assert_eq!(json["used_shebang"], false);
+    assert_eq!(json["used_extension_map"], true);
+}
+
+#[test]
+fn check_reports_detection_metadata() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/ok.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/ok.sh"]);
+    assert_eq!(code, 0);
+    assert_eq!(json["detected_runner"], "sh");
+    assert_eq!(json["detection_source"], "shebang");
+    assert_eq!(json["used_shebang"], true);
+    assert!(json["argv"].is_array());
+}
+
+#[test]
+fn explicit_runner_overrides_extension_mapping() {
+    if !have("bash") {
+        return;
+    }
+    let repo = init_repo();
+    // .sh would default to sh; --runner bash forces bash regardless of the shebang.
+    write_script(repo.path(), ".aikit/temp/x.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh", "--runner", "bash"]);
+    assert_eq!(code, 0);
+    assert_eq!(json["detected_runner"], "bash");
+    assert_eq!(json["detection_source"], "explicit_runner");
+    assert_eq!(json["used_extension_map"], false);
+}
+
+#[test]
+fn explicit_unknown_runner_is_not_allowed() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/ok.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/ok.sh", "--runner", "fish"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_runner_not_allowed");
+}
+
+#[test]
+fn ps1_maps_to_powershell_family_or_reports_unavailable() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/x.ps1", "Write-Output hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.ps1"]);
+    if code == 0 {
+        let runner = json["detected_runner"].as_str().unwrap();
+        assert!(
+            runner == "pwsh" || runner == "powershell",
+            "ps1 should resolve to a PowerShell runner, got {runner}"
+        );
+        assert_eq!(json["detection_source"], "extension_map");
+    } else {
+        assert_eq!(code, 3);
+        assert_eq!(json["blocked_state"], "blocked_runner_not_found");
+    }
+}
+
+#[test]
+fn cmd_maps_to_cmd_on_windows_else_unavailable() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/x.cmd", "echo hi\r\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.cmd"]);
+    if cfg!(windows) {
+        assert_eq!(code, 0);
+        assert_eq!(json["detected_runner"], "cmd");
+    } else {
+        assert_eq!(code, 3);
+        assert_eq!(json["blocked_state"], "blocked_runner_not_found");
+    }
+}
+
+#[test]
+fn bat_maps_to_cmd_on_windows_else_unavailable() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/x.bat", "echo hi\r\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.bat"]);
+    if cfg!(windows) {
+        assert_eq!(code, 0);
+        assert_eq!(json["detected_runner"], "cmd");
+    } else {
+        assert_eq!(code, 3);
+        assert_eq!(json["blocked_state"], "blocked_runner_not_found");
+    }
+}
+
+#[test]
+fn py_maps_to_python_when_available_else_unavailable() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/x.py", "print('hi')\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.py"]);
+    if have("python3") || have("python") {
+        assert_eq!(code, 0);
+        let runner = json["detected_runner"].as_str().unwrap();
+        assert!(runner == "python3" || runner == "python");
+        assert_eq!(json["detection_source"], "extension_map");
+    } else {
+        assert_eq!(code, 3);
+        assert_eq!(json["blocked_state"], "blocked_runner_not_found");
+    }
+}
+
+#[test]
+fn js_maps_to_node_when_available_else_unavailable() {
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/x.js", "console.log('hi')\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.js"]);
+    if have("node") {
+        assert_eq!(code, 0);
+        assert_eq!(json["detected_runner"], "node");
+        assert_eq!(json["detection_source"], "extension_map");
+    } else {
+        assert_eq!(code, 3);
+        assert_eq!(json["blocked_state"], "blocked_runner_not_found");
+    }
+}
+
+#[test]
+fn py_script_executes_when_python_available() {
+    if !(have("python3") || have("python")) {
+        return;
+    }
+    let repo = init_repo();
+    write_script(repo.path(), ".aikit/temp/p.py", "print('from-python')\n");
+    aikit(repo.path())
+        .args(["script", "run", ".aikit/temp/p.py"])
+        .assert()
+        .success();
+    let dir = find_run_dir(repo.path(), ".aikit/outputs/runs");
+    assert_eq!(
+        fs::read_to_string(dir.join("stdout.txt")).unwrap(),
+        "from-python\n"
+    );
+}
+
+// ---- config-driven runner detection ----
+
+#[test]
+fn config_extension_map_overrides_builtin() {
+    if !have("bash") {
+        return;
+    }
+    let repo = init_repo();
+    // Map .sh -> bash via config; this beats the shebang too (config tier > shebang).
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "extension_map": { ".sh": ["bash"] } } }),
+    );
+    write_script(repo.path(), ".aikit/temp/x.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 0);
+    assert_eq!(json["detected_runner"], "bash");
+    assert_eq!(json["detection_source"], "config");
+    assert_eq!(json["used_extension_map"], true);
+}
+
+#[test]
+fn config_preferred_runners_changes_order() {
+    if !have("bash") {
+        return;
+    }
+    let repo = init_repo();
+    // Built-in .sh candidates are [sh, bash]; preferring bash reorders to [bash, sh].
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "preferred_runners": ["bash"] } }),
+    );
+    // No shebang, so the (reordered) built-in extension map decides.
+    write_script(repo.path(), ".aikit/temp/x.sh", "echo hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 0);
+    assert_eq!(json["detected_runner"], "bash");
+    assert_eq!(json["detection_source"], "extension_map");
+}
+
+#[test]
+fn config_detect_from_shebang_false_ignores_shebang() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "detect_from_shebang": false } }),
+    );
+    // Shebang says sh, but with detection disabled the extension map decides (.sh -> sh).
+    write_script(repo.path(), ".aikit/temp/x.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 0);
+    assert_eq!(json["detection_source"], "extension_map");
+    assert_eq!(json["used_shebang"], false);
+}
+
+#[test]
+fn config_detect_from_extension_false_allows_shebang_only() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "detect_from_extension": false } }),
+    );
+    // Extension mapping is off, but the shebang still selects a runner.
+    write_script(repo.path(), ".aikit/temp/x.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 0);
+    assert_eq!(json["detected_runner"], "sh");
+    assert_eq!(json["detection_source"], "shebang");
+}
+
+#[test]
+fn config_detect_from_extension_false_blocks_extension_only_script() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "detect_from_extension": false } }),
+    );
+    // No shebang and extension mapping disabled -> unknown script type.
+    write_script(repo.path(), ".aikit/temp/x.sh", "echo hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_unknown_script_type");
+}
+
+#[test]
+fn config_unknown_preferred_runner_fails_clearly() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "preferred_runners": ["bsah"] } }),
+    );
+    write_script(repo.path(), ".aikit/temp/x.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_runner_not_allowed");
+}
+
+#[test]
+fn config_unknown_extension_map_runner_fails_clearly() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "extension_map": { ".sh": ["bsah"] } } }),
+    );
+    write_script(repo.path(), ".aikit/temp/x.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_runner_not_allowed");
+}
+
+#[test]
+fn config_unknown_runner_also_blocks_script_run() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "preferred_runners": ["bsah"] } }),
+    );
+    write_script(repo.path(), ".aikit/temp/x.sh", "#!/bin/sh\necho hi\n");
+    aikit(repo.path())
+        .args(["script", "run", ".aikit/temp/x.sh"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_runner_not_allowed"));
+}
+
+#[test]
+fn config_mixed_case_preferred_runner_fails_clearly() {
+    let repo = init_repo();
+    // Configured runner names must be lowercase; "Bash" must not pass validation.
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "preferred_runners": ["Bash"] } }),
+    );
+    write_script(repo.path(), ".aikit/temp/x.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_runner_not_allowed");
+}
+
+#[test]
+fn config_mixed_case_extension_map_runner_fails_clearly() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "extension_map": { ".sh": ["Python3"] } } }),
+    );
+    write_script(repo.path(), ".aikit/temp/x.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_runner_not_allowed");
+}
+
+#[test]
+fn config_uppercase_runner_value_fails_clearly() {
+    let repo = init_repo();
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "preferred_runners": ["NODE"] } }),
+    );
+    write_script(repo.path(), ".aikit/temp/x.sh", "#!/bin/sh\necho hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 3);
+    assert_eq!(json["blocked_state"], "blocked_runner_not_allowed");
+}
+
+#[test]
+fn config_valid_lowercase_runner_still_works() {
+    if !have("bash") {
+        return;
+    }
+    let repo = init_repo();
+    // Lowercase configured names continue to work.
+    write_config(
+        repo.path(),
+        &serde_json::json!({ "script_runner": { "extension_map": { ".sh": ["bash"] } } }),
+    );
+    write_script(repo.path(), ".aikit/temp/x.sh", "echo hi\n");
+    let (code, json) = check_json(repo.path(), &[".aikit/temp/x.sh"]);
+    assert_eq!(code, 0);
+    assert_eq!(json["detected_runner"], "bash");
+    assert_eq!(json["detection_source"], "config");
 }
