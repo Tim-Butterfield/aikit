@@ -2,7 +2,12 @@
 name = "aikit"
 version = "0.1.0"
 edition = "2021"
-description = "Personal compiled CLI for deterministic AI-agent workflow support."
+description = "A local CLI for deterministic AI-assisted repository workflows."
+license = "MIT"
+repository = "https://github.com/Tim-Butterfield/aikit"
+readme = "README.md"
+keywords = ["ai", "cli", "workflow", "review", "automation"]
+categories = ["command-line-utilities", "development-tools"]
 publish = false
 
 [[bin]]

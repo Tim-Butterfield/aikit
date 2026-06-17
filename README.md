@@ -1,12 +1,26 @@
 # aikit
 
-`aikit` is a personal compiled CLI for deterministic AI-agent workflow support.
+`aikit` is a local CLI for deterministic AI-assisted repository workflows.
+
+It is a single compiled binary that performs **local, mechanical operations** —
+anchoring a unit of work, discovering what changed, generating a bounded review
+bundle, inventorying a repo, and running local scripts under explicit policy. It
+calls **no AI providers**, performs no network operations as part of its core
+behavior, and makes no autonomous decisions.
 
 ## Status
 
-- Personal tool — built primarily for the architect's own use.
-- Private repo — pushed to the private GitHub remote; not currently intended for
-  public distribution, and may never be.
+- Early, personal-use-oriented software — built primarily for the author's own
+  workflows — now being prepared for public visibility under the MIT license.
+- License: MIT (see [`LICENSE`](LICENSE)).
+- `publish = false` is set in `Cargo.toml`. `aikit` is currently distributed as
+  source and intended to be built or installed from this repository, not published
+  as a crates.io package.
+- What `aikit` is **not**: not an autonomous agent, not a security sandbox, not a
+  methodology validator or governance judge, and not a provider/model router. It
+  calls no AI providers. (See [Non-Goals](#non-goals).)
+- Generated outputs under `.aikit/outputs/` are **local-only** and should not be
+  committed.
 - Implemented so far: `aikit batch start`, `aikit batch changed` (Batch 1),
   `aikit inventory repo` (Batch 2), `aikit review generate` from explicit files
   (Batch 3) or a batch anchor (Batch 4), and the `aikit script` family —
@@ -489,6 +503,17 @@ Install the `aikit` binary so downstream repositories can call `aikit ...` direc
 without `cargo run`. `cargo install --path .` builds `aikit` and copies it into Cargo's
 bin directory (normally `$HOME/.cargo/bin`). Re-run `cargo install --path .` after
 pulling or building a newer local version.
+
+`aikit` is distributed as source from this Git repository, not as a crates.io
+package (`publish = false`). **Once this repository is public**, early users can
+install the binary directly from Git without cloning first:
+
+```sh
+cargo install --git https://github.com/Tim-Butterfield/aikit
+```
+
+(While the repository is still private this Git install will not work for others;
+use the from-clone instructions below.)
 
 macOS (zsh) — recommended:
 
