@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-`aikit` is a personal compiled CLI for deterministic AI-agent workflow support. It
+`aikit` is a local CLI for deterministic AI-assisted repository workflows. It
 performs mechanical, repeatable local operations that support AI-agent and
 human-in-the-loop workflows, without making semantic, methodology, or governance
 judgments itself.
@@ -26,19 +26,25 @@ judgments itself.
 - **The CLI performs mechanical operations** — collection, hashing, enumeration,
   controlled execution, and reporting.
 
-## 3. Initial Scope
+## 3. Scope
 
-The initial spec covers only:
+This specification covers the current `aikit` command families and their behavior:
 
-- governed local script validation and execution;
-- batch anchor creation;
-- changed-file discovery from an anchor;
-- review bundle generation;
-- repo inventory generation.
+- governed local script validation and execution (`script check` / `script run`);
+- batch anchor creation, inspection, and changed-file discovery (`batch start` /
+  `batch changed` / `batch list` / `batch show`);
+- anchor diffing (`diff anchor`);
+- review bundle generation (`review generate`);
+- repo inventory generation (`inventory repo`);
+- repository readiness setup and reporting (`repo init` / `repo doctor`);
+- local output-artifact management (`output list` / `output show` / `output clean`);
+- environment snapshots and heuristic secret scanning (`env snapshot` / `scan secrets`);
+- version reporting (`version`);
+- configuration files and precedence (§5.11).
 
 ## 4. Out of Scope
 
-Explicitly out of scope for the initial spec:
+Explicitly out of scope:
 
 - recurring scratch validation as a core command;
 - hard-coded methodology validation;
@@ -52,15 +58,14 @@ Explicitly out of scope for the initial spec:
 
 ## 5. Command Model
 
-The initial command families. Behaviors below are **specification intent**, not
-implementation commitments.
+The command families. Behaviors below describe current CLI behavior.
 
 ### 5.1 `aikit script run` / `aikit script check`
 
 The `script` command family is a noun (`script`) with verb actions (`run`, `check`).
 There is exactly one public way to run a script (`aikit script run`); the earlier
 `aikit run script` shape was superseded by this command and is **not** retained as an
-alias (see the implementation plan's post-initial command-shape correction).
+alias.
 
 **`aikit script run` — purpose:**
 - execute a local script under policy controls;
@@ -69,7 +74,7 @@ alias (see the implementation plan's post-initial command-shape correction).
 - write run metadata;
 - block unsafe operations where mechanically detectable.
 
-**`aikit script run` — initial behavior:**
+**`aikit script run` — behavior:**
 - detect repo root;
 - require the script path to be inside allowed project-local locations;
 - reject repo escapes;
@@ -106,7 +111,7 @@ sandbox), and allowed script *input* locations are unchanged by this behavior.
 - validate a script against the same policy without executing it;
 - report whether the policy accepts the script, and the blocked state when it does not.
 
-**`aikit script check` — initial behavior:**
+**`aikit script check` — behavior:**
 - detect repo root;
 - resolve/canonicalize the script path and validate the allowed location, path/symlink
   boundary, and runner detection (same order as `script run`);
@@ -161,7 +166,7 @@ sandbox), and allowed script *input* locations are unchanged by this behavior.
 **Purpose:**
 - generate a bounded review bundle for AI/human review.
 
-**Initial behavior:**
+**Behavior:**
 - accept explicit files (`--files`) or files changed since an anchor (`--anchor`);
 - in anchor mode, use the **same timestamp-based discovery as `batch changed`** (existing
   files whose filesystem mtime is newer than the anchor file; not `git status`; dirty-vs-
@@ -176,7 +181,7 @@ sandbox), and allowed script *input* locations are unchanged by this behavior.
 - each bundle writes two files under `.aikit/outputs/reviews/<review-id>/`: the readable
   text bundle `review_bundle.txt` and `manifest.json` (whose `bundle_path` records
   `review_bundle.txt`). The text bundle was renamed from the historical
-  `run_for_review.txt` in a post-initial cleanup; older local review outputs may still
+  `run_for_review.txt`; older local review outputs may still
   carry the old name, but new generation uses `review_bundle.txt` and never writes both.
 
 **Single-file / embedded-manifest output (opt-in):**
@@ -221,7 +226,7 @@ manifest also records the generating `aikit_version`.
 **Purpose:**
 - generate a mechanical repo inventory.
 
-**Initial behavior:**
+**Behavior:**
 - list files subject to include/exclude rules;
 - include sizes and hashes;
 - identify likely tooling/config files;
@@ -229,9 +234,8 @@ manifest also records the generating `aikit_version`.
 
 ### 5.6 `aikit repo init` / `aikit repo doctor`
 
-The `repo` command family is **post-initial Slice 2** (not part of the completed initial
-implementation batches; see the implementation plan's post-initial slice section). It
-uses the same noun-family / action grammar as the rest of the CLI.
+The `repo` command family uses the same noun-family / action grammar as the rest of the
+CLI.
 
 **`aikit repo init` — purpose:**
 - prepare the current repository for local aikit usage.
@@ -271,8 +275,7 @@ uses the same noun-family / action grammar as the rest of the CLI.
 
 ### 5.7 `aikit output list` / `aikit output show` / `aikit output clean`
 
-The `output` command family is **post-initial Slice 3** (not part of the completed
-initial implementation batches). It manages local aikit output artifacts under an output
+The `output` command family manages local aikit output artifacts under an output
 root (default `.aikit/outputs/`), using the noun-family / action grammar. Known artifacts
 are `batches/*.json` files and `inventory/`, `reviews/`, and `runs/` subdirectories;
 arbitrary files elsewhere are not treated as aikit output artifacts.
@@ -308,8 +311,7 @@ arbitrary files elsewhere are not treated as aikit output artifacts.
 
 ### 5.8 `aikit batch list` / `aikit batch show` / `aikit diff anchor`
 
-These commands are **post-initial Slice 4** (not part of the completed initial batches).
-They are mechanical inspection/diff commands: they do not auto-select a "latest" anchor,
+These are mechanical inspection/diff commands: they do not auto-select a "latest" anchor,
 advance workflow state, perform semantic review, create review bundles, or touch remotes.
 `batch list`/`batch show` extend the `batch` family; `diff anchor` is a new `diff` family.
 
@@ -340,9 +342,8 @@ advance workflow state, perform semantic review, create review bundles, or touch
 
 ### 5.9 `aikit env snapshot` / `aikit scan secrets`
 
-These commands are **post-initial Slice 5** (not part of the completed initial batches),
-the final slice of the approved five-slice post-initial command expansion. `env snapshot`
-is a new `env` family; `scan secrets` is a new `scan` family. Neither calls AI providers,
+`env snapshot`
+is an `env` family; `scan secrets` is a `scan` family. Neither calls AI providers,
 touches remotes, makes semantic governance decisions, or creates durable output artifacts
 by default; both prefer stdout plus `--json`.
 
@@ -450,48 +451,3 @@ Blocked states are explicit, named, mechanical conditions. Examples:
 - `blocked_runner_not_allowed` (explicit `--runner` is not a recognized runner);
 - `blocked_missing_base_commit`;
 - `blocked_secret_findings`.
-
-## 8. Historical Sources and Patterns
-
-`aikit` may be **informed by** prior local tools and patterns, but the initial spec
-copies **no** scripts directly. Source patterns include:
-
-- IDesign `run-batch.zsh` (path-prefix safe-zone runner + audit echo);
-- legacy `run-step.mjs` (manifest runner, concurrency lock, clean-tree preflight,
-  no commit/push);
-- the historical "newer" timestamp anchor pattern (changed-file discovery);
-- the `run_for_review` / `archtool` review-bundle pattern (hashed, capped bundles);
-- the `repo_inventory` pattern (mechanical repo enumeration).
-
-These are **source patterns, not implementation commitments**. Durable behavior must
-be **re-specified and implemented in Rust**, not ported verbatim.
-
-## 9. Implementation Direction
-
-- Rust preferred.
-- Single compiled binary.
-- Subcommands.
-- Implemented in Rust as a single `aikit` binary with subcommands; see
-  `aikit-implementation-plan.md` and `implementation-manifest.md` for the realized
-  module layout and per-command details.
-
-## 10. Open Decisions
-
-Settled during implementation (see `aikit-implementation-plan.md` and
-`implementation-manifest.md` for specifics):
-
-- crate / module structure;
-- anchor, review-bundle, inventory, and run-record formats and their JSON schemas;
-- default include/exclude rules;
-- best-effort policy scan rules;
-- config files and precedence (see §5.11): `aikit.config.json` and `.aikit/config.json`
-  are read, layered over built-in defaults and under CLI flags, with `bundle`,
-  `discovery`, and `script_runner` sections;
-- cross-OS script runner detection (see §5.1).
-
-Still open:
-
-- install method;
-- whether to support agent wrapper files later;
-- whether to expose a dedicated config-schema version (currently config has no separate
-  schema version; the package version and per-record `schema_version` remain distinct).

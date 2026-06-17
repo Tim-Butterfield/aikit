@@ -1,5 +1,5 @@
 {
-  "_comment": "Example aikit configuration. Copy to aikit.config.json (repo root) or .aikit/config.json and edit. Precedence: built-in defaults < aikit.config.json < .aikit/config.json < CLI flags. All keys are optional; defaults preserve the legacy review-bundle behavior. This example file itself is NOT loaded by aikit (only aikit.config.json / .aikit/config.json are).",
+  "_comment": "Example aikit configuration. Copy to aikit.config.json (repo root) or .aikit/config.json and edit. Precedence: built-in defaults < aikit.config.json < .aikit/config.json < CLI flags. All keys are optional; defaults preserve the standard directory-mode review-bundle behavior. This example file itself is NOT loaded by aikit (only aikit.config.json / .aikit/config.json are).",
 
   "bundle": {
     "_comment": "single_file=true writes one bundle file with the manifest embedded and no review directory or sidecar manifest.json; then `output` is the bundle FILE path (default tmp/review_bundle.txt). When single_file=false (directory mode), `output` is the output ROOT directory (default .aikit/outputs) and is omitted here.",

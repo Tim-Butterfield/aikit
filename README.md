@@ -11,7 +11,7 @@ behavior, and makes no autonomous decisions.
 ## Status
 
 - Early, personal-use-oriented software — built primarily for the author's own
-  workflows — now being prepared for public visibility under the MIT license.
+  workflows — and available as open source under the MIT license.
 - License: MIT (see [`LICENSE`](LICENSE)).
 - `publish = false` is set in `Cargo.toml`. `aikit` is currently distributed as
   source and intended to be built or installed from this repository, not published
@@ -21,17 +21,6 @@ behavior, and makes no autonomous decisions.
   calls no AI providers. (See [Non-Goals](#non-goals).)
 - Generated outputs under `.aikit/outputs/` are **local-only** and should not be
   committed.
-- Implemented so far: `aikit batch start`, `aikit batch changed` (Batch 1),
-  `aikit inventory repo` (Batch 2), `aikit review generate` from explicit files
-  (Batch 3) or a batch anchor (Batch 4), and the `aikit script` family —
-  `aikit script run` / `aikit script check` (Batch 5, then corrected to the `script`
-  command shape in post-initial Slice 1) — Rust scaffold, repo-root detection, anchor
-  JSON, changed-file detection, a deterministic hashed repository inventory, bounded
-  review-bundle generation, and a governed local script runner/validator (not a
-  security sandbox).
-- Intentionally not implemented: the precomputed `--changed <changed.json>` review
-  mode (anchor mode covers the changed-since-anchor case; this would only be added
-  later if a real need appears).
 
 ## Purpose
 
@@ -56,51 +45,33 @@ behavior, and makes no autonomous decisions.
 - **not** a replacement for Git;
 - **not** a copied collection of old scripts.
 
-## Command Families
+## Available Commands
 
-- `aikit script run`
-- `aikit script check`
+- `aikit repo init`
+- `aikit repo doctor`
 - `aikit batch start`
 - `aikit batch changed`
-- `aikit review generate`
+- `aikit batch list`
+- `aikit batch show`
+- `aikit diff anchor`
 - `aikit inventory repo`
-- `aikit repo init` (post-initial Slice 2)
-- `aikit repo doctor` (post-initial Slice 2)
-- `aikit output list` (post-initial Slice 3)
-- `aikit output show` (post-initial Slice 3)
-- `aikit output clean` (post-initial Slice 3)
-- `aikit batch list` (post-initial Slice 4)
-- `aikit batch show` (post-initial Slice 4)
-- `aikit diff anchor` (post-initial Slice 4)
-- `aikit env snapshot` (post-initial Slice 5)
-- `aikit scan secrets` (post-initial Slice 5)
+- `aikit review generate`
+- `aikit script check`
+- `aikit script run`
+- `aikit output list`
+- `aikit output show`
+- `aikit output clean`
+- `aikit env snapshot`
+- `aikit scan secrets`
 - `aikit version`
 
-## Implementation Direction
+## Design
 
 - Rust.
 - One compiled binary named `aikit`.
 - Subcommand-based.
 - Machine-readable output where useful.
 - No runtime dependency on shell, Python, or Node for core behavior.
-
-## Development Posture
-
-`aikit` is developed with a deliberately **lightweight posture**:
-
-- Specification-first — design decisions are settled in docs before code is written.
-- Minimal moving parts — one binary, no sprawling runtime dependencies.
-- Incremental — build the smallest useful slice, validate it, then grow.
-- Low ceremony — avoid heavyweight process, frameworks, or tooling that the
-  scope does not yet justify.
-- Reversible — favor choices that are easy to revisit as the tool matures.
-
-## Relationship to Architect Toolkit
-
-- Separate repo: `aikit` is **not** part of Architect Toolkit.
-- Architect Toolkit may consume `aikit` later, but is only one possible future
-  consumer.
-- `aikit` is **not** Architect Toolkit-specific.
 
 ## Building and Usage
 
@@ -505,15 +476,14 @@ bin directory (normally `$HOME/.cargo/bin`). Re-run `cargo install --path .` aft
 pulling or building a newer local version.
 
 `aikit` is distributed as source from this Git repository, not as a crates.io
-package (`publish = false`). **Once this repository is public**, early users can
-install the binary directly from Git without cloning first:
+package (`publish = false`). You can install the binary directly from Git without
+cloning first:
 
 ```sh
 cargo install --git https://github.com/Tim-Butterfield/aikit
 ```
 
-(While the repository is still private this Git install will not work for others;
-use the from-clone instructions below.)
+Or build from a local clone:
 
 macOS (zsh) — recommended:
 
@@ -564,23 +534,8 @@ cargo build
 
 This direct-binary form is for working on `aikit` itself, not for normal downstream use.
 
-## Current State
+## Documentation
 
-Batch 1 (`batch start`, `batch changed`), Batch 2 (`inventory repo`), Batch 3 +
-Batch 4 (`review generate --files` and `review generate --anchor`), and the
-`script` family (`script run` / `script check`) commands are implemented. Post-initial
-work has added the corrected `script` command shape (Slice 1), the `repo` family
-(`repo init` / `repo doctor`, Slice 2), the `output` family (`output list` /
-`output show` / `output clean`, Slice 3), batch inspection + anchor diff
-(`batch list` / `batch show` / `diff anchor`, Slice 4), and the `env`/`scan` families
-(`env snapshot` / `scan secrets`, Slice 5). This completes the approved five-slice
-post-initial command expansion. The precomputed `--changed <changed.json>` review mode
-is not implemented (anchor mode covers the changed-since-anchor case). See
-[`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) for the CLI specification,
-[`docs/aikit-implementation-plan.md`](docs/aikit-implementation-plan.md) for the
-implementation plan,
-[`docs/agent-usage.md`](docs/agent-usage.md) for the agent-agnostic usage guide,
-[`docs/agent-integration-examples.md`](docs/agent-integration-examples.md) for
-example external-wrapper integration patterns, and
-[`docs/decisions/0001-create-aikit.md`](docs/decisions/0001-create-aikit.md) for the
-repo-creation decision.
+- [`docs/aikit-cli-spec.md`](docs/aikit-cli-spec.md) — CLI behavior and command reference.
+- [`docs/agent-usage.md`](docs/agent-usage.md) — agent-agnostic usage guidance.
+- [`docs/agent-integration-examples.md`](docs/agent-integration-examples.md) — example wrapper patterns for external integrations.

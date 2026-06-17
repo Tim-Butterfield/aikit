@@ -120,7 +120,7 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
 - **Output:** a printed (or `--json`) readiness report (`aikit.repo_doctor`): repo root,
   branch/HEAD, tracked clean/dirty, `.aikit/` `.aikit/temp/` `.aikit/outputs/`
   existence, ignore status + source, default output root, allowed script locations,
-  interpreter availability, version, warnings, and an overall `ready` flag.
+  runner availability, version, warnings, and an overall `ready` flag.
 
 ### `aikit output list` / `aikit output show` / `aikit output clean`
 

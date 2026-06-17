@@ -40,25 +40,22 @@ This document explicitly does **not**:
 
 ## Source Guidance
 
-The example patterns below are synthesized from three sources, not invented:
+The example patterns below are grounded in the project's authoritative references:
 
 - [`docs/agent-usage.md`](agent-usage.md) — the agent-agnostic usage contract,
   exit-code convention, blocked-state names, and per-command constraints.
 - The installed `aikit --help` surface (root command plus every subcommand),
   which is the authoritative per-command reference.
-- Three independent command audits (one each from the Claude, Codex, and Gemini
-  perspectives) that classified every installed command as a strong, limited, or
-  not-recommended candidate for wrapping.
 
-The three audits agree on the high-value core (`repo doctor`, `batch start`,
-`batch changed`, `review generate`, `scan secrets`, and `script check` as a
-preflight) and on the sharp edges (`output clean --execute`, `script run`, and
-broad/ignored scans need explicit confirmation; anchors are never auto-selected).
-Where they differed — for example, how eager `repo init` and `inventory repo`
-should be — this document takes the more conservative reading: prepare and
-snapshot deliberately rather than automatically. The synthesis is summarized in
-[Recommended Minimal Integration Set](#recommended-minimal-integration-set); the
-audits are not quoted at length.
+The recommended high-value core to wrap is `repo doctor`, `batch start`,
+`batch changed`, `review generate`, `scan secrets`, and `script check` (as a
+preflight). The sharp edges — `output clean --execute`, `script run`, and
+broad/ignored scans — need explicit confirmation, and anchors are never
+auto-selected. For commands that prepare or snapshot state (`repo init`,
+`inventory repo`), this document takes the conservative reading: prepare and
+snapshot deliberately rather than automatically. The recommended core is
+summarized in
+[Recommended Minimal Integration Set](#recommended-minimal-integration-set).
 
 ## Wrapper Design Rules
 
