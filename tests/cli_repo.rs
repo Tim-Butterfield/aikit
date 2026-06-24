@@ -685,8 +685,29 @@ fn doctor_readiness_does_not_require_zsh_on_unix() {
 
 #[test]
 fn doctor_in_hg_repo_reports_vcs_and_ignore_after_init() {
-    let repo = init_hg_repo();
+    // When Mercurial is installed (e.g. CI runners), build a real hg repo so doctor can
+    // actually introspect it; otherwise fall back to a bare `.hg/` marker, which still
+    // exercises aikit's filesystem-only detection and the graceful degradation path taken
+    // when `hg` is unavailable. This keeps the test correct in both environments.
+    let hg_present = Command::new("hg")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    let repo = TempDir::new().expect("tempdir");
     let p = repo.path();
+    if hg_present {
+        let status = Command::new("hg")
+            .current_dir(p)
+            .env("HGRCPATH", "") // hermetic: ignore user/global hgrc
+            .args(["init"])
+            .status()
+            .expect("failed to run hg init");
+        assert!(status.success(), "hg init failed in {}", p.display());
+    } else {
+        fs::create_dir_all(p.join(".hg")).expect("create .hg");
+    }
 
     // Before init: detected as a Mercurial repo, not yet ignored/ready.
     let before = json_out(p, &["repo", "doctor"]);
@@ -696,7 +717,8 @@ fn doctor_in_hg_repo_reports_vcs_and_ignore_after_init() {
 
     aikit(p).args(["repo", "init"]).assert().success();
 
-    // After init: ignore detected (filesystem, no hg binary), ready if a runner exists.
+    // After init: ignore detected (filesystem, no hg binary required), ready if a runner
+    // exists.
     let after = json_out(p, &["repo", "doctor"]);
     assert_eq!(after["vcs"], "mercurial");
     assert_eq!(after["aikit_ignored"], true);
@@ -704,17 +726,33 @@ fn doctor_in_hg_repo_reports_vcs_and_ignore_after_init() {
     if after["any_runner_available"] == true {
         assert_eq!(after["ready"], true);
     }
-    // `hg` is not installed in this environment, so branch/HEAD/tracked-tree degrade with a
-    // single warning (not silently). Branch/HEAD are empty; a warning records the cause.
-    assert_eq!(after["git_branch"], "");
+
+    // HEAD is empty either way: a fresh repo has no commits (null node), and an
+    // unavailable `hg` degrades HEAD to empty.
     assert_eq!(after["git_head"], "");
     let warnings = after["warnings"].as_array().unwrap();
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w.as_str().unwrap().contains("`hg` is unavailable")),
-        "expected an hg-unavailable warning covering branch/HEAD + tracked-tree: {warnings:?}"
-    );
+
+    if hg_present {
+        // `hg` introspects the repo: the Mercurial named branch defaults to `default`,
+        // and no degradation warning is emitted.
+        assert_eq!(after["git_branch"], "default");
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| w.as_str().unwrap().contains("`hg` is unavailable")),
+            "hg is installed; expected no hg-unavailable warning: {warnings:?}"
+        );
+    } else {
+        // `hg` is not installed, so branch/HEAD/tracked-tree degrade with a single warning
+        // (not silently). Branch is empty; a warning records the cause.
+        assert_eq!(after["git_branch"], "");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().unwrap().contains("`hg` is unavailable")),
+            "expected an hg-unavailable warning covering branch/HEAD + tracked-tree: {warnings:?}"
+        );
+    }
 }
 
 #[test]
