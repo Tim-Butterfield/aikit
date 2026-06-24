@@ -8,14 +8,34 @@ bundle, inventorying a repo, and running local scripts under explicit policy. It
 calls **no AI providers**, performs no network operations as part of its core
 behavior, and makes no autonomous decisions.
 
+## Install
+
+Install the latest directly from GitHub — no clone required:
+
+```sh
+cargo install --git https://github.com/Tim-Butterfield/aikit
+```
+
+This builds `aikit` and puts it on your PATH (`~/.cargo/bin`); it needs a Rust
+toolchain (install via [`rustup`](https://rustup.rs)). Pin a version with
+`--tag <tag>` or `--rev <sha>`.
+
+For development, build from a local clone instead:
+
+```sh
+git clone https://github.com/Tim-Butterfield/aikit
+cd aikit
+cargo install --path .    # or: cargo build --release  → target/release/aikit
+```
+
 ## Status
 
 - Early, personal-use-oriented software — built primarily for the author's own
   workflows — and available as open source under the MIT license.
 - License: MIT (see [`LICENSE`](LICENSE)).
-- `publish = false` is set in `Cargo.toml`. `aikit` is currently distributed as
-  source and intended to be built or installed from this repository, not published
-  as a crates.io package.
+- `publish = false` is set in `Cargo.toml`: `aikit` is distributed as source and
+  installed from this repository (see [Install](#install)), not published to
+  crates.io.
 - What `aikit` is **not**: not an autonomous agent, not a security sandbox, not a
   methodology validator or governance judge, and not a provider/model router. It
   calls no AI providers. (See [Non-Goals](#non-goals).)
@@ -75,15 +95,9 @@ behavior, and makes no autonomous decisions.
 - Machine-readable output where useful.
 - No runtime dependency on shell, Python, or Node for core behavior.
 
-## Building and Usage
+## Usage
 
-`aikit` is a standard Rust binary. Build and install locally:
-
-```sh
-cargo build            # debug build at target/debug/aikit
-cargo build --release  # optimized build at target/release/aikit
-cargo install --path . # install `aikit` onto your PATH
-```
+See [Install](#install) above to put the `aikit` binary on your PATH.
 
 Run inside a Git repository. Mark an anchor before a unit of work, then list what
 changed since:
@@ -491,22 +505,13 @@ aikit scan secrets src --json --include-ignored
   With `--fail-on-findings`, a non-empty finding set exits 3 (`blocked_secret_findings`).
   It creates no output artifacts and never touches remotes.
 
-## Install for Local Use
+## Install — detailed setup (PATH, per-OS)
 
-Install the `aikit` binary so downstream repositories can call `aikit ...` directly,
-without `cargo run`. `cargo install --path .` builds `aikit` and copies it into Cargo's
-bin directory (normally `$HOME/.cargo/bin`). Re-run `cargo install --path .` after
-pulling or building a newer local version.
-
-`aikit` is distributed as source from this Git repository, not as a crates.io
-package (`publish = false`). You can install the binary directly from Git without
-cloning first:
-
-```sh
-cargo install --git https://github.com/Tim-Butterfield/aikit
-```
-
-Or build from a local clone:
+The [Install](#install) section above covers the common cases (the `cargo install --git`
+one-liner and a local clone). This section adds per-OS `PATH` setup so other repositories
+can call `aikit ...` directly. `cargo install` copies the binary into Cargo's bin
+directory (normally `$HOME/.cargo/bin`); re-run it after pulling or building a newer
+version, and make sure that directory is on your `PATH`.
 
 macOS (zsh) — recommended:
 
