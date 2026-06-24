@@ -201,6 +201,34 @@ fn script_run_help_describes_detected_runner_not_fixed_interpreter() {
 }
 
 #[test]
+fn script_run_help_describes_vcs_aware_behavior() {
+    let out = AssertCommand::new(cargo_bin("aikit"))
+        .args(["script", "run", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8_lossy(&out);
+    // The help must document the VCS-aware root detection + clean-tree behavior so it
+    // does not drift from docs/aikit-cli-spec.md §5.1.
+    for needle in [
+        ".aikit",
+        ".hg",
+        "Mercurial",
+        "vcs",
+        "hg status -mard",
+        "blocked_require_clean_unsupported",
+        "blocked_repo_not_found",
+    ] {
+        assert!(
+            help.contains(needle),
+            "script run --help missing VCS-aware needle {needle:?}"
+        );
+    }
+}
+
+#[test]
 fn script_check_help_states_not_a_sandbox() {
     AssertCommand::new(cargo_bin("aikit"))
         .args(["script", "check", "--help"])
@@ -334,6 +362,86 @@ fn run_zsh_script_runs_through_bin_zsh() {
     let json: Value =
         serde_json::from_str(&fs::read_to_string(dir.join("run.json")).unwrap()).unwrap();
     assert_eq!(json["interpreter"], "/bin/zsh");
+}
+
+// ---- script run: non-repo .aikit folder & hg root (filesystem detection) ----
+
+/// Create a non-repo folder with a `.aikit/` marker (as `aikit folder init` would),
+/// no `.git`/`.hg`. `script run` should detect it via filesystem walk-up alone.
+fn init_aikit_folder() -> TempDir {
+    let dir = TempDir::new().expect("tempdir");
+    fs::create_dir_all(dir.path().join(".aikit/temp")).unwrap();
+    dir
+}
+
+#[test]
+fn run_in_non_repo_aikit_folder_executes_and_records_vcs_none() {
+    let folder = init_aikit_folder();
+    let p = folder.path();
+    write_script(p, ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
+    aikit(p)
+        .args(["script", "run", ".aikit/temp/h.sh"])
+        .assert()
+        .success();
+    let dir = find_run_dir(p, ".aikit/outputs/runs");
+    let json: Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("run.json")).unwrap()).unwrap();
+    assert_eq!(json["executed"], true);
+    assert_eq!(json["vcs"], "none");
+    // Head is git-only; a non-repo run records empty heads and spawns no git probe.
+    assert_eq!(json["git_head_before"], "");
+    assert_eq!(json["git_head_after"], "");
+}
+
+#[test]
+fn run_require_clean_in_non_repo_folder_is_blocked() {
+    let folder = init_aikit_folder();
+    let p = folder.path();
+    write_script(p, ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
+    aikit(p)
+        .args(["script", "run", ".aikit/temp/h.sh", "--require-clean"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains(
+            "blocked_require_clean_unsupported",
+        ));
+}
+
+#[test]
+fn run_outside_any_marker_is_blocked_repo_not_found() {
+    // A bare temp dir with no .git/.hg/.aikit, and a script written directly in it.
+    let dir = TempDir::new().unwrap();
+    let p = dir.path();
+    fs::create_dir_all(p.join(".scratch/work/temp")).unwrap();
+    fs::write(p.join(".scratch/work/temp/h.sh"), "#!/bin/sh\necho hi\n").unwrap();
+    aikit(p)
+        .args(["script", "run", ".scratch/work/temp/h.sh"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_repo_not_found"));
+}
+
+#[test]
+fn run_in_hg_repo_executes_and_records_vcs_mercurial() {
+    // `.hg/` marker only (no hg binary needed for detection).
+    let dir = TempDir::new().unwrap();
+    let p = dir.path();
+    fs::create_dir_all(p.join(".hg")).unwrap();
+    write_script(p, ".aikit/temp/h.sh", "#!/bin/sh\necho hi\n");
+    aikit(p)
+        .args(["script", "run", ".aikit/temp/h.sh"])
+        .assert()
+        .success();
+    let dir = find_run_dir(p, ".aikit/outputs/runs");
+    let json: Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("run.json")).unwrap()).unwrap();
+    assert_eq!(json["executed"], true);
+    assert_eq!(json["vcs"], "mercurial");
+    // Head is git-only; an hg run records empty heads (and spawns no git head probe).
+    assert_eq!(json["git_head_before"], "");
+    assert_eq!(json["git_head_after"], "");
 }
 
 // ---- script run: print / clean-tree ----

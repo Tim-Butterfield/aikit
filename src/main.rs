@@ -24,8 +24,8 @@ mod version;
 use clap::Parser;
 
 use cli::{
-    BatchCommand, Cli, Command, DiffCommand, EnvCommand, InventoryCommand, OutputCommand,
-    RepoCommand, ReviewCommand, ScanCommand, ScriptCommand,
+    BatchCommand, Cli, Command, DiffCommand, EnvCommand, FolderCommand, InventoryCommand,
+    OutputCommand, RepoCommand, ReviewCommand, ScanCommand, ScriptCommand,
 };
 use errors::AikitError;
 
@@ -65,6 +65,10 @@ fn run(cli: Cli) -> Result<(), AikitError> {
         },
         Command::Review(rev) => match rev.command {
             ReviewCommand::Generate(args) => review::generate(args),
+        },
+        Command::Init(args) => repo::init_auto(args),
+        Command::Folder(folder_cli) => match folder_cli.command {
+            FolderCommand::Init(args) => repo::init_folder(args),
         },
         Command::Repo(repo_cli) => match repo_cli.command {
             RepoCommand::Init(args) => repo::init(args),

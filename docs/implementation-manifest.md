@@ -19,6 +19,9 @@
 - Batch 5 is complete and committed (governed script runner).
 - Batch 6 is complete and is being committed in this batch (local integration/polish).
 - All six initial implementation batches are complete; no further batches are planned.
+- Multi-VCS support (Mercurial) + adaptive `init`/`folder init` is **implemented and
+  pending cross-AI review + commit** — see "Post-Initial Enhancement — Multi-VCS Support
+  (Mercurial) + Adaptive Init" below.
 
 ## 3. Classification Values
 
@@ -1126,3 +1129,96 @@ filename, so it recognizes the renamed bundle without modification (covered by a
 asserts the reported bundle filename). Historical Batch 3/4 records in this manifest that
 mention `run_for_review.txt` (as originally delivered/tested) are retained as historical and
 are **superseded by this rename**. No ignored/local-only files are staged.
+
+## Post-Initial Enhancement — Multi-VCS Support (Mercurial) + Adaptive Init
+
+A post-initial enhancement (not a new command slice from the original plan) adds
+**Mercurial** support alongside Git and introduces an adaptive top-level `aikit init` plus
+an explicit `aikit folder init` for non-repository folders. The initial six batches and the
+five post-initial command slices remain historical and complete. This section exists for
+the manifest-compare gate; it is implemented and pending cross-AI review + commit.
+
+### Enhancement scope (implemented)
+
+- **Filesystem-based VCS/root detection (no subprocess).** Detection walks up for an
+  enclosing `.git` (file or directory), `.hg`, or `.aikit` marker. It requires **no**
+  `git`/`hg` CLI invocation, so it works on hosts without either binary and on Windows.
+  - `repo::find_vcs_root()` — nearest `.git`/`.hg` (Git precedence) for the init commands.
+  - `repo::detect_marker_root()` — nearest `.git`/`.hg`/`.aikit`, returning the root and an
+    `Option<Vcs>`, for the `script run`/`check` gate (`blocked_repo_not_found` when none).
+  - The Git-only commands (`batch`, `diff`, `inventory`, `review`, `scan`, `env`,
+    `output`) are **unchanged**; they continue to use the existing git-CLI `detect_root()`
+    and remain Git-only by design.
+- **New setup verbs (adaptive + explicit):**
+  - `aikit init` — adaptive: repo mode (dirs + VCS ignore) inside a Git/Mercurial repo,
+    else folder mode (dirs only). Never errors on repo presence/absence.
+  - `aikit folder init` — force non-repo mode (dirs only); errors `blocked_repo_present`
+    inside a repository.
+  - `aikit repo init` — unchanged contract (force repo mode), now also works in Mercurial
+    repos; still errors `blocked_repo_not_found` outside a repository.
+- **Mercurial ignore mechanism.** In an hg repo, ignore coverage is written to
+  `.hg/hgignore.aikit` (pattern `re:^\.aikit/`) and registered via `[ui] ignore.aikit` in
+  `.hg/hgrc` — both under `.hg/`, never committed or cloned, mirroring Git's local-only
+  `.git/info/exclude`. A tracked `.hgignore`/`.gitignore` is never modified; existing
+  coverage is detected (filesystem) and not duplicated.
+- **`aikit repo doctor` is VCS-aware.** Works in Git repos, Mercurial repos, and non-repo
+  `.aikit/` folders; reports a `vcs` field. For Mercurial: ignore coverage is detected
+  without invoking `hg`; branch/HEAD use `hg` (run with `HGPLAIN=1`) when available and
+  degrade to empty with a warning otherwise; the tracked-tree check uses `hg status -mard`
+  and degrades to "clean" + a warning when `hg` is absent. Readiness does not require
+  ignore coverage in a non-repo folder. Read-only and exit-0-in-a-root behavior unchanged.
+- **`aikit script run` / `script check` are VCS-aware.** The gate uses
+  `detect_marker_root()` (filesystem; non-repo runs incur zero subprocesses). The
+  `--require-clean` dirty check is VCS-specific and runs only with that flag: Git
+  `git status --porcelain`; Mercurial `hg status -mard` (HGPLAIN; the only place the runner
+  invokes `hg`; errors if absent); a non-repo root blocks
+  `blocked_require_clean_unsupported`. `run.json` records `vcs`; HEAD is populated for Git
+  and empty for Mercurial/non-repo.
+- **New blocked states:** `blocked_repo_present`, `blocked_require_clean_unsupported`.
+- **New JSON fields (no new format kinds):** `vcs` added to `aikit.repo_init`,
+  `aikit.repo_doctor`, and `aikit.script_run`. `RepoDoctor.git_branch`/`git_head` field
+  names are retained for schema stability and documented as VCS-generic.
+- **HGPLAIN policy.** All aikit-internal `hg` invocations go through `repo::hg_command()`,
+  which sets `HGPLAIN=1` per call. HGPLAIN is **not** set globally on aikit's process, so
+  user scripts run via `script run` keep their normal environment.
+- No new runtime dependency (`Cargo.toml` / `Cargo.lock` unchanged).
+
+### Enhancement expected committed files
+
+| Path | Classification | Purpose |
+|---|---|---|
+| `src/repo.rs` | modified | `Vcs` enum; filesystem detection (`markers_in`/`walk_up`/`find_vcs_root`/`detect_marker_root`); hg helpers (`hg_command`/`run_hg`/`hg_tracked_tree_dirty`/`vcs_branch`/`vcs_head`/`hg_aikit_ignore_source`); hg ignore writer (`ensure_aikit_ignored_hg` + hgrc/hgignore helpers); `do_init` + `init`/`init_auto`/`init_folder`; VCS-aware `doctor` |
+| `src/cli.rs` | modified | add top-level `Init` + `Folder`/`FolderCommand::Init` + args; update `init`/`folder init`/`repo init`/`repo doctor`/`repo` group/top-level long_abouts |
+| `src/main.rs` | modified | dispatch `aikit init` and `aikit folder init` |
+| `src/errors.rs` | modified | add `blocked_repo_present`, `blocked_require_clean_unsupported` |
+| `src/formats.rs` | modified | add `vcs` to `RepoInit`, `RepoDoctor`, `ScriptRun`; doc updates (VCS-generic `git_branch`/`git_head`) |
+| `src/script.rs` | modified | `Located.vcs`; gate via `detect_marker_root`; VCS-aware `--require-clean`; `vcs` in `run.json`; head probe git-only |
+| `tests/cli_repo.rs` | modified | hg `repo init` tests; `init`/`folder init` tests (git/hg/non-repo, refusals); hg + non-repo `doctor` tests |
+| `tests/cli_script.rs` | modified | non-repo `.aikit` run; hg-marker run; non-repo `--require-clean` block; markerless block |
+| `README.md` | modified | command list; repo setup (Git/Mercurial/non-repo); script run detection + `--require-clean` + `run.json` |
+| `docs/agent-usage.md` | modified | purpose; blocked-state list; workflow; init/folder/doctor sections; Script Runner Use |
+| `docs/aikit-cli-spec.md` | modified | §5.6 init family + doctor; §5.1 script run/check; root-detection principle; blocked-states list |
+| `docs/implementation-manifest.md` | modified | this section + Status line |
+
+### Enhancement expected-vs-actual
+
+To be confirmed against `git status` / `git diff` before commit; the committed set should
+match the table above. **Justified deviations / non-changes:**
+
+- `src/policy/script.rs` is **unchanged** — the allowed-location allowlist and runner
+  detection are reused as-is; only the root anchoring (in `script.rs`) changed.
+- `Cargo.toml` / `Cargo.lock` are **unchanged** — no new dependency (hg is shelled out to,
+  not linked; detection is pure `std::fs`).
+- `tests/cli_integration.rs` is **unchanged** — the end-to-end flow runs in a Git repo and
+  is unaffected; new VCS paths are covered by `tests/cli_repo.rs` / `tests/cli_script.rs`.
+- `docs/aikit-implementation-plan.md` is **unchanged** — the plan documents the original
+  batches/slices; this enhancement is recorded here in the manifest rather than retro-fitted
+  into the historical plan. (Flagged as a deliberate deviation from prior slices, which did
+  update the plan; revisit if a living-plan entry is preferred.)
+- Mercurial is not installed in the dev/CI environment, so hg tests exercise the
+  filesystem-detectable paths (a `.hg/` marker, ignore-file writing, doctor degradation +
+  warning) **without** requiring the `hg` binary; the `hg`-invoking paths (`hg status`
+  dirty check, `hg` branch/head) are covered by code review rather than execution here.
+- No ignored/local-only files are staged; Mercurial ignore writes (`.hg/hgignore.aikit`,
+  `.hg/hgrc`) and Git `.git/info/exclude` writes are local VCS metadata and are never
+  staged.

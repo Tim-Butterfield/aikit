@@ -10,10 +10,12 @@ help is the authoritative per-command reference.
 
 ## Purpose
 
-- `aikit` is a local, mechanical CLI for AI-assisted work in a Git repository.
+- `aikit` is a local, mechanical CLI for AI-assisted work in a Git or Mercurial
+  repository (setup and the script runner also work in a non-repo `.aikit/` folder).
 - It helps agents and humans create batch anchors, inspect changed files, inventory a
   repository, generate bounded review bundles, and run constrained local scripts.
-- It performs deterministic, repeatable operations on the filesystem and Git state.
+- It performs deterministic, repeatable operations on the filesystem and version-control
+  (Git or Mercurial) state.
 - It does **not** decide architecture, methodology, approval, sufficiency, or
   correctness.
 - It is **not** an autonomous agent — it runs one command and exits.
@@ -52,10 +54,10 @@ help is the authoritative per-command reference.
 - `1` — command failure (an unexpected error).
 - `2` — invalid usage (bad or conflicting flags; handled by the argument parser).
 - `3` — a named **blocked state** (a mechanical precondition was not met, e.g.
-  `blocked_repo_not_found`, `blocked_missing_anchor`, `blocked_invalid_anchor`,
-  `blocked_path_escape`, `blocked_script_not_allowed`, `blocked_dirty_tree`,
-  `blocked_unsupported_mode`, `blocked_forbidden_operation`, `blocked_unreadable_file`,
-  `blocked_secret_findings`).
+  `blocked_repo_not_found`, `blocked_repo_present`, `blocked_require_clean_unsupported`,
+  `blocked_missing_anchor`, `blocked_invalid_anchor`, `blocked_path_escape`,
+  `blocked_script_not_allowed`, `blocked_dirty_tree`, `blocked_unsupported_mode`,
+  `blocked_forbidden_operation`, `blocked_unreadable_file`, `blocked_secret_findings`).
 
 A blocked state is a deliberate, named refusal — agents must surface it, not ignore it.
 
@@ -64,8 +66,11 @@ A blocked state is a deliberate, named refusal — agents must surface it, not i
 When setting up a repository for the first time, check → prepare → re-check:
 
 1. `aikit repo doctor` — read-only readiness report.
-2. `aikit repo init` — prepare local `.aikit/temp/` and local ignore coverage
-   (idempotent; safe to re-run).
+2. `aikit init` — adaptive one-step setup: in a Git or Mercurial repository it prepares
+   local `.aikit/temp/` and adds the VCS-appropriate local ignore coverage; in a non-repo
+   folder it creates the directories only (idempotent; safe to re-run). Use
+   `aikit repo init` to require a repository, or `aikit folder init` to force non-repo
+   treatment.
 3. `aikit repo doctor` — confirm the repo is now `ready`.
 
 A typical local cycle:
@@ -97,30 +102,47 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
 
 ## Command Families
 
-### `aikit repo init`
+### `aikit init` / `aikit repo init` / `aikit folder init`
 
-- **Purpose:** prepare the current repository for local aikit usage.
-- **Typical use:** first-time setup of a repo (creates `.aikit/temp/` and ensures
-  `.aikit/` is locally ignored).
-- **Constraints:** must be run inside a Git repository, else `blocked_repo_not_found`.
-  Idempotent. Adds ignore coverage to `.git/info/exclude` (local Git metadata, never
-  staged), **not** `.gitignore`. Creates no output artifacts and does not create
-  `.scratch/` or `.claude/`; never touches remote Git state.
-- **Output:** a printed (or `--json`) record of what was already present and what was
-  created, including ignore status (`aikit.repo_init`).
+All three create `.aikit/` and `.aikit/temp/` (idempotent), create no output artifacts,
+and do not create `.scratch/` or `.claude/`. They differ only in how they treat
+version control. **Repository detection is filesystem-based** (it looks for an enclosing
+`.git`/`.hg`) and does **not** require the `git`/`hg` CLI to be installed or on PATH.
+
+- **`aikit init`** — adaptive. Inside a Git or Mercurial repository it behaves like
+  `repo init` (adds VCS ignore coverage); outside any repository it behaves like
+  `folder init` (directories only, no ignore). Never errors on repo presence/absence.
+- **`aikit repo init`** — force repo mode. Errors `blocked_repo_not_found` when not
+  inside a Git or Mercurial repository. Ensures `.aikit/` is locally ignored using the
+  VCS's local, never-committed mechanism: for **Git**, an entry in `.git/info/exclude`
+  (local Git metadata, never staged); for **Mercurial**, a `.hg/hgignore.aikit` pattern
+  registered via `[ui] ignore.aikit` in `.hg/hgrc` (both under `.hg/`, never committed or
+  cloned). Tracked ignore files (`.gitignore` / `.hgignore`) are never modified; no
+  duplicate entry is added when `.aikit/` is already ignored.
+- **`aikit folder init`** — force non-repo mode (directories only, no ignore). Errors
+  `blocked_repo_present` when run inside a Git or Mercurial repository (use `repo init` or
+  `init` there so `.aikit/` is ignored).
+- **Output:** a printed (or `--json`) record (`aikit.repo_init`) of what was already
+  present and what was created, including a `vcs` field (`git` / `mercurial` / `none`) and
+  ignore status/source.
 
 ### `aikit repo doctor`
 
 - **Purpose:** report repo-local aikit readiness, read-only.
-- **Typical use:** confirm a repo is set up (run before/after `repo init`).
+- **Typical use:** confirm a repo (or non-repo `.aikit/` folder) is set up (run
+  before/after `init`).
 - **Constraints:** **read-only** — creates and modifies nothing (no `.aikit/`,
-  `.scratch/`, `.claude/`, `.gitignore`, or `.git/info/exclude`). Must be run inside a
-  Git repository, else `blocked_repo_not_found`. Exit 0 even with warnings; missing
-  `.aikit/temp/` or ignore coverage are warnings, not failures.
+  `.scratch/`, `.claude/`, `.gitignore`, `.git/info/exclude`, `.hgignore`, or `.hg/`
+  state). Works in Git repos, Mercurial repos, and non-repo `.aikit/` folders; only being
+  outside any of these is `blocked_repo_not_found`. Exit 0 even with warnings; missing
+  `.aikit/temp/` or (in a repo) ignore coverage are warnings, not failures. For Mercurial,
+  ignore coverage is detected without invoking `hg`; branch/HEAD come from `hg` (run with
+  `HGPLAIN=1`) when available and degrade to empty with a warning otherwise.
 - **Output:** a printed (or `--json`) readiness report (`aikit.repo_doctor`): repo root,
-  branch/HEAD, tracked clean/dirty, `.aikit/` `.aikit/temp/` `.aikit/outputs/`
-  existence, ignore status + source, default output root, allowed script locations,
-  runner availability, version, warnings, and an overall `ready` flag.
+  `vcs` (`git`/`mercurial`/`none`), branch/HEAD, tracked clean/dirty, `.aikit/`
+  `.aikit/temp/` `.aikit/outputs/` existence, ignore status + source, default output root,
+  allowed script locations, runner availability, version, warnings, and an overall `ready`
+  flag. A non-repo `.aikit/` folder needs no ignore coverage to be `ready`.
 
 ### `aikit output list` / `aikit output show` / `aikit output clean`
 
@@ -351,16 +373,28 @@ only with `--execute` plus a selector — aikit never deletes outputs automatica
   type blocks with `blocked_unknown_script_type`; a selected-but-unavailable runner blocks
   with `blocked_runner_not_found`; an unknown `--runner` name blocks with
   `blocked_runner_not_allowed`.
+- **Run root detection is filesystem-based and VCS-agnostic.** `script run` / `script
+  check` anchor to the nearest enclosing `.git`, `.hg`, or `.aikit` directory — so they
+  work in a Git repo, a Mercurial repo, **or** a non-repo `.aikit/` folder, with **no**
+  `git`/`hg` subprocess for detection. When no such marker is found the command blocks
+  with `blocked_repo_not_found`. The detected root is recorded as `vcs`
+  (`git`/`mercurial`/`none`) in `run.json`.
 - `--print` validates policy and prints the planned command **without executing**
   (recorded as `executed: false`; no run directory is created).
-- `--require-clean` blocks when the tracked working tree is dirty
-  (`blocked_dirty_tree`).
+- `--require-clean` blocks when the tracked working tree is dirty (`blocked_dirty_tree`).
+  The dirty check is VCS-specific and runs only with this flag: **Git** uses
+  `git status --porcelain`; **Mercurial** uses `hg status -mard` (run with `HGPLAIN=1`;
+  the only place `script run` invokes `hg`, and it errors clearly if `hg` is not
+  installed). In a non-repo `.aikit/` folder there is no working tree to check, so
+  `--require-clean` blocks with `blocked_require_clean_unsupported`.
 - `--allow-dirty` permits a dirty tracked tree; this is the **default** when neither
-  flag is given. `--require-clean` and `--allow-dirty` cannot be combined.
+  flag is given (and does no VCS work). `--require-clean` and `--allow-dirty` cannot be
+  combined.
 - On execution the output run directory contains the copied script (extension
   retained), `stdout.txt`, `stderr.txt`, and `run.json`, which records runner metadata:
-  `detected_runner`, `detection_source`, `used_shebang`, `used_extension_map`, the
-  resolved interpreter, `argv`, cwd, git heads, exit code, timings, and paths.
+  `vcs`, `detected_runner`, `detection_source`, `used_shebang`, `used_extension_map`, the
+  resolved interpreter, `argv`, cwd, head(s) (populated for Git; empty for Mercurial /
+  non-repo), exit code, timings, and paths.
 
 ## Agent-Generated Script Rules
 

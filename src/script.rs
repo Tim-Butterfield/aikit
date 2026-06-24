@@ -42,22 +42,31 @@ const SANDBOX_NOTE: &str =
 best-effort and easily bypassed; the allowed-location policy is the primary control. \
 Running a script here does not make it safe.";
 
-/// A script that passed path/location resolution: its repo-relative path and real
+/// A script that passed path/location resolution: its aikit-root-relative path and real
 /// canonical path. The runner is detected separately (it needs the script content).
 struct Located {
     root: PathBuf,
     rel: String,
     real: PathBuf,
+    /// VCS of the run root (`None` for a non-repo `.aikit/` folder). Drives the
+    /// `--require-clean` check and the audit record's `vcs`/`git_head_*` fields.
+    vcs: Option<repo::Vcs>,
 }
 
-/// Detect the repo, resolve + canonicalize the script path, and reject
-/// repo/allowlist escapes. Does not read content or pick a runner.
+/// Detect the aikit run root (filesystem-based; no `git`/`hg` subprocess), resolve +
+/// canonicalize the script path, and reject root/allowlist escapes. Does not read
+/// content or pick a runner.
 fn resolve_and_locate(input: &str) -> Result<Located, AikitError> {
-    let root = repo::detect_root()?;
+    let (root, vcs) = repo::detect_marker_root()?;
     let root_canon = fs::canonicalize(&root)
         .map_err(|e| AikitError::other(format!("failed to resolve repo root: {e}")))?;
     let (rel, real) = resolve_script_path(&root_canon, input)?;
-    Ok(Located { root, rel, real })
+    Ok(Located {
+        root,
+        rel,
+        real,
+        vcs,
+    })
 }
 
 /// Read the located script's bytes, mapping failure to `blocked_unreadable_file`.
@@ -87,13 +96,28 @@ not a security check — refusing to run"
             ),
         ));
     }
-    // Clean-tree policy. Default is allow-dirty; --require-clean blocks a dirty
-    // tracked tree. (--require-clean / --allow-dirty are mutually exclusive in clap.)
-    if require_clean && repo::is_tracked_tree_dirty(&located.root) {
-        return Err(AikitError::blocked(
-            blocked::DIRTY_TREE,
-            "tracked working tree is dirty and --require-clean was given",
-        ));
+    // Clean-tree policy. Default is allow-dirty; --require-clean blocks a dirty tracked
+    // tree. (--require-clean / --allow-dirty are mutually exclusive in clap.) The dirty
+    // check is VCS-specific and only runs when --require-clean is given — so a non-repo
+    // run never touches a VCS, and `hg` is only invoked here for an hg root.
+    if require_clean {
+        let dirty = match located.vcs {
+            Some(repo::Vcs::Git) => repo::git_tracked_tree_dirty(&located.root)?,
+            Some(repo::Vcs::Mercurial) => repo::hg_tracked_tree_dirty(&located.root)?,
+            None => {
+                return Err(AikitError::blocked(
+                    blocked::REQUIRE_CLEAN_UNSUPPORTED,
+                    "--require-clean needs a Git or Mercurial working tree, but this is a \
+non-repo aikit folder",
+                ))
+            }
+        };
+        if dirty {
+            return Err(AikitError::blocked(
+                blocked::DIRTY_TREE,
+                "tracked working tree is dirty and --require-clean was given",
+            ));
+        }
     }
     Ok(())
 }
@@ -122,7 +146,13 @@ pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
     )?;
     check_forbidden_and_clean(&content, &located, args.require_clean)?;
 
-    let Located { root, rel, real } = located;
+    let Located {
+        root,
+        rel,
+        real,
+        vcs,
+    } = located;
+    let vcs_tag = vcs.map(|v| v.tag()).unwrap_or("none").to_string();
 
     let script_sha256 = sha256_bytes(&content);
     let ext = Path::new(&rel)
@@ -137,7 +167,12 @@ pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
     let argv = build_argv(&detection, &rel);
 
     let now = OffsetDateTime::now_utc();
-    let head = repo::git_head(&root);
+    // Head probe is git-only; hg/non-repo roots record an empty head (run_id falls back
+    // to "nohead"). This keeps `script run` from spawning a VCS process off the git path.
+    let head = match vcs {
+        Some(repo::Vcs::Git) => repo::git_head(&root),
+        _ => String::new(),
+    };
     let run_id = format!("{}-{}", format_ts(now, ID_FORMAT), short_head(&head));
     let started_at = format_ts(now, TS_FORMAT);
     let cwd = root.display().to_string();
@@ -150,6 +185,7 @@ pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
             kind: KIND_SCRIPT_RUN.to_string(),
             run_id,
             repo_root: cwd.clone(),
+            vcs: vcs_tag.clone(),
             script_path: rel.clone(),
             script_sha256,
             script_copy_path: None,
@@ -233,12 +269,18 @@ pub fn run(args: ScriptRunArgs) -> Result<(), AikitError> {
     let _ = fs::write(&stdout_path, &out.stdout);
     let _ = fs::write(&stderr_path, &out.stderr);
 
-    let head_after = repo::git_head(&root);
+    // Head probe stays git-only (same gating as `head` before execution), so hg and
+    // non-repo runs spawn no VCS subprocess here.
+    let head_after = match vcs {
+        Some(repo::Vcs::Git) => repo::git_head(&root),
+        _ => String::new(),
+    };
     let record = ScriptRun {
         schema_version: SCHEMA_VERSION,
         kind: KIND_SCRIPT_RUN.to_string(),
         run_id,
         repo_root: cwd.clone(),
+        vcs: vcs_tag.clone(),
         script_path: rel.clone(),
         script_sha256,
         script_copy_path: Some(script_copy_name),

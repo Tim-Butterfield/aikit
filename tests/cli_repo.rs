@@ -64,6 +64,24 @@ fn read_info_exclude(repo: &Path) -> String {
     fs::read_to_string(repo.join(".git/info/exclude")).unwrap_or_default()
 }
 
+/// Build a throwaway Mercurial repo by creating the `.hg/` marker directory. aikit
+/// detects Mercurial by walking up for `.hg/` (no `hg` binary required), so these
+/// tests run even where Mercurial is not installed. The dir is not a Git repo, so
+/// `repo init` falls through to the Mercurial branch.
+fn init_hg_repo() -> TempDir {
+    let dir = TempDir::new().expect("tempdir");
+    fs::create_dir_all(dir.path().join(".hg")).expect("create .hg");
+    dir
+}
+
+fn read_hg_ignore(repo: &Path) -> String {
+    fs::read_to_string(repo.join(".hg/hgignore.aikit")).unwrap_or_default()
+}
+
+fn read_hgrc(repo: &Path) -> String {
+    fs::read_to_string(repo.join(".hg/hgrc")).unwrap_or_default()
+}
+
 // ---- help ----
 
 #[test]
@@ -97,7 +115,11 @@ fn repo_doctor_help_says_read_only() {
         .success()
         .stdout(predicates::str::contains("read-only"))
         .stdout(predicates::str::contains("readiness"))
-        .stdout(predicates::str::contains("creates no files"));
+        .stdout(predicates::str::contains("creates no files"))
+        // VCS-aware: non-repo readiness exception + Mercurial coverage in the read-only list.
+        .stdout(predicates::str::contains("non-repo"))
+        .stdout(predicates::str::contains(".hgignore"))
+        .stdout(predicates::str::contains("Mercurial"));
 }
 
 #[test]
@@ -251,6 +273,309 @@ fn init_adds_full_coverage_when_only_a_child_is_ignored() {
     );
 }
 
+// ---- repo init (Mercurial) ----
+
+#[test]
+fn init_hg_writes_local_ignore_and_hgrc() {
+    let repo = init_hg_repo();
+    let p = repo.path();
+    let json = json_out(p, &["repo", "init"]);
+
+    assert_eq!(json["kind"], "aikit.repo_init");
+    assert_eq!(json["vcs"], "mercurial");
+    assert_eq!(json["aikit_ignored"], true);
+    assert_eq!(json["info_exclude_updated"], true);
+    assert_eq!(json["ignore_source"], ".hg/hgignore.aikit");
+
+    // Dirs created as usual.
+    assert!(p.join(".aikit").is_dir());
+    assert!(p.join(".aikit/temp").is_dir());
+
+    // Rooted, syntax-explicit pattern in the local ignore file.
+    assert!(
+        read_hg_ignore(p).contains(r"re:^\.aikit/"),
+        ".hg/hgignore.aikit should contain the rooted .aikit/ pattern"
+    );
+
+    // hgrc registers the ignore file under [ui].
+    let hgrc = read_hgrc(p);
+    assert!(hgrc.contains("[ui]"), "hgrc should contain a [ui] section");
+    assert!(
+        hgrc.contains("ignore.aikit = .hg/hgignore.aikit"),
+        "hgrc should register the ignore file via [ui] ignore.aikit"
+    );
+
+    // Never touches the tracked root .hgignore or any Git state.
+    assert!(!p.join(".hgignore").exists());
+    assert!(!p.join(".git").exists());
+}
+
+#[test]
+fn init_hg_is_idempotent() {
+    let repo = init_hg_repo();
+    let p = repo.path();
+
+    let first = json_out(p, &["repo", "init"]);
+    assert_eq!(first["info_exclude_updated"], true);
+
+    let second = json_out(p, &["repo", "init"]);
+    assert_eq!(second["created_dirs"].as_array().unwrap().len(), 0);
+    assert_eq!(second["info_exclude_updated"], false);
+    assert_eq!(second["aikit_ignored"], true);
+    assert_eq!(second["ignore_source"], ".hg/hgignore.aikit");
+
+    // Pattern present exactly once; ignore.aikit registered exactly once.
+    let pat_count = read_hg_ignore(p)
+        .lines()
+        .filter(|l| l.trim() == r"re:^\.aikit/")
+        .count();
+    assert_eq!(pat_count, 1, "ignore pattern must not be duplicated");
+    let entry_count = read_hgrc(p)
+        .lines()
+        .filter(|l| l.trim().starts_with("ignore.aikit"))
+        .count();
+    assert_eq!(entry_count, 1, "ignore.aikit entry must not be duplicated");
+}
+
+#[test]
+fn init_hg_skips_when_hgignore_already_covers_aikit() {
+    let repo = init_hg_repo();
+    let p = repo.path();
+    // Pre-existing tracked .hgignore already covers .aikit/ (default regexp syntax).
+    fs::write(p.join(".hgignore"), "syntax: glob\n.aikit/\n").unwrap();
+
+    let json = json_out(p, &["repo", "init"]);
+    assert_eq!(json["aikit_ignored"], true);
+    assert_eq!(json["info_exclude_updated"], false);
+    assert_eq!(json["ignore_source"], ".hgignore");
+
+    // Must not create local config when already covered.
+    assert!(
+        !p.join(".hg/hgignore.aikit").exists(),
+        "must not add local ignore file when already covered by .hgignore"
+    );
+    assert!(!read_hgrc(p).contains("ignore.aikit"));
+}
+
+#[test]
+fn init_hg_managed_entry_wins_over_later_conflicting_ui_section() {
+    let repo = init_hg_repo();
+    let p = repo.path();
+    // Two [ui] sections; the LATER one has a conflicting ignore.aikit. Mercurial merges
+    // [ui] sections and the last value wins, so our entry must land in the last [ui].
+    fs::write(
+        p.join(".hg/hgrc"),
+        "[ui]\nusername = x\n\n[paths]\ndefault = https://example/repo\n\n[ui]\nignore.aikit = something-else.txt\n",
+    )
+    .unwrap();
+
+    let json = json_out(p, &["repo", "init"]);
+    assert_eq!(json["aikit_ignored"], true);
+    assert_eq!(json["ignore_source"], ".hg/hgignore.aikit");
+
+    let hgrc = read_hgrc(p);
+    let ours = hgrc
+        .find("ignore.aikit = .hg/hgignore.aikit")
+        .expect("managed entry must be registered");
+    let conflicting = hgrc
+        .find("ignore.aikit = something-else.txt")
+        .expect("pre-existing conflicting line must be preserved");
+    // Ours must come after the conflicting one so Mercurial's last-wins applies it.
+    assert!(
+        ours > conflicting,
+        "managed entry must win over a later conflicting [ui] section:\n{hgrc}"
+    );
+}
+
+#[test]
+fn init_hg_skips_when_hgignore_covers_aikit_via_content_glob() {
+    let repo = init_hg_repo();
+    let p = repo.path();
+    // A directory-content glob that covers the whole .aikit/ tree (not the exact `.aikit`).
+    fs::write(p.join(".hgignore"), "syntax: glob\n.aikit/**\n").unwrap();
+
+    let json = json_out(p, &["repo", "init"]);
+    assert_eq!(json["aikit_ignored"], true);
+    assert_eq!(json["info_exclude_updated"], false);
+    assert_eq!(json["ignore_source"], ".hgignore");
+    assert!(
+        !p.join(".hg/hgignore.aikit").exists(),
+        "must not add local ignore config when a content-glob already covers .aikit/"
+    );
+}
+
+#[test]
+fn init_hg_preserves_existing_hgrc_and_inserts_under_ui() {
+    let repo = init_hg_repo();
+    let p = repo.path();
+    // Pre-existing hgrc with a [ui] section and an unrelated [paths] section.
+    fs::write(
+        p.join(".hg/hgrc"),
+        "[ui]\nusername = Test User <t@e.com>\n\n[paths]\ndefault = https://example/repo\n",
+    )
+    .unwrap();
+
+    json_out(p, &["repo", "init"]);
+    let hgrc = read_hgrc(p);
+
+    // Existing content preserved.
+    assert!(hgrc.contains("username = Test User <t@e.com>"));
+    assert!(hgrc.contains("[paths]"));
+    assert!(hgrc.contains("default = https://example/repo"));
+    // New entry inserted under the existing [ui] section (no second [ui] header).
+    assert!(hgrc.contains("ignore.aikit = .hg/hgignore.aikit"));
+    assert_eq!(
+        hgrc.matches("[ui]").count(),
+        1,
+        "must reuse the existing [ui] section, not add a second"
+    );
+}
+
+#[test]
+fn init_hg_registers_managed_entry_despite_conflicting_ignore_aikit_value() {
+    let repo = init_hg_repo();
+    let p = repo.path();
+    // A pre-existing, unrelated `ignore.aikit` key pointing at a different file.
+    fs::write(
+        p.join(".hg/hgrc"),
+        "[ui]\nignore.aikit = something-else.txt\n",
+    )
+    .unwrap();
+
+    let json = json_out(p, &["repo", "init"]);
+    // Coverage must be reported via our managed file, not the unrelated value.
+    assert_eq!(json["aikit_ignored"], true);
+    assert_eq!(json["ignore_source"], ".hg/hgignore.aikit");
+    assert_eq!(json["info_exclude_updated"], true);
+
+    // Our managed entry is present AND ordered AFTER the conflicting one, so Mercurial's
+    // last-wins makes our value effective (not just textually present).
+    let hgrc = read_hgrc(p);
+    let ours = hgrc
+        .find("ignore.aikit = .hg/hgignore.aikit")
+        .expect("managed entry must be registered");
+    let conflicting = hgrc
+        .find("ignore.aikit = something-else.txt")
+        .expect("pre-existing line must be preserved");
+    assert!(
+        ours > conflicting,
+        "managed entry must come AFTER the conflicting one so it wins:\n{hgrc}"
+    );
+}
+
+#[test]
+fn init_hg_registers_under_ui_when_managed_line_is_in_wrong_section() {
+    let repo = init_hg_repo();
+    let p = repo.path();
+    // The managed key/value exists, but under a non-[ui] section, where Mercurial does
+    // NOT honor it as ignore coverage. init must still add a real [ui] registration.
+    fs::write(
+        p.join(".hg/hgrc"),
+        "[extensions]\nignore.aikit = .hg/hgignore.aikit\n",
+    )
+    .unwrap();
+
+    let json = json_out(p, &["repo", "init"]);
+    assert_eq!(json["aikit_ignored"], true);
+    assert_eq!(json["ignore_source"], ".hg/hgignore.aikit");
+    assert_eq!(json["info_exclude_updated"], true);
+
+    let hgrc = read_hgrc(p);
+    assert!(hgrc.contains("[ui]"), "must add a [ui] section:\n{hgrc}");
+    // The managed entry now appears under [ui] (after the [ui] header).
+    let ui_idx = hgrc.find("[ui]").unwrap();
+    assert!(
+        hgrc[ui_idx..].contains("ignore.aikit = .hg/hgignore.aikit"),
+        "managed entry must be registered under [ui]:\n{hgrc}"
+    );
+}
+
+// ---- aikit init (adaptive) / folder init ----
+
+#[test]
+fn init_auto_in_git_repo_adds_ignore_like_repo_init() {
+    let repo = init_repo();
+    let p = repo.path();
+    let json = json_out(p, &["init"]);
+    assert_eq!(json["vcs"], "git");
+    assert_eq!(json["aikit_ignored"], true);
+    assert_eq!(json["ignore_source"], ".git/info/exclude");
+    assert!(read_info_exclude(p).contains("/.aikit/"));
+    assert!(p.join(".aikit/temp").is_dir());
+}
+
+#[test]
+fn init_auto_in_hg_repo_adds_hg_ignore() {
+    let repo = init_hg_repo();
+    let p = repo.path();
+    let json = json_out(p, &["init"]);
+    assert_eq!(json["vcs"], "mercurial");
+    assert_eq!(json["aikit_ignored"], true);
+    assert_eq!(json["ignore_source"], ".hg/hgignore.aikit");
+    assert!(read_hgrc(p).contains("ignore.aikit = .hg/hgignore.aikit"));
+}
+
+#[test]
+fn init_auto_in_non_repo_creates_dirs_without_ignore() {
+    let dir = TempDir::new().unwrap();
+    let p = dir.path();
+    let json = json_out(p, &["init"]);
+    assert_eq!(json["vcs"], "none");
+    assert_eq!(json["aikit_ignored"], false);
+    assert!(json["ignore_source"].is_null());
+    assert_eq!(json["info_exclude_updated"], false);
+    assert!(p.join(".aikit").is_dir());
+    assert!(p.join(".aikit/temp").is_dir());
+    // No VCS state of any kind is created.
+    assert!(!p.join(".git").exists());
+    assert!(!p.join(".hg").exists());
+    assert!(!p.join(".gitignore").exists());
+}
+
+#[test]
+fn folder_init_in_non_repo_creates_dirs_only() {
+    let dir = TempDir::new().unwrap();
+    let p = dir.path();
+    let json = json_out(p, &["folder", "init"]);
+    assert_eq!(json["vcs"], "none");
+    assert_eq!(json["aikit_ignored"], false);
+    assert!(p.join(".aikit/temp").is_dir());
+}
+
+#[test]
+fn folder_init_refuses_inside_git_repo() {
+    let repo = init_repo();
+    aikit(repo.path())
+        .args(["folder", "init"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_repo_present"));
+    // It must not have created .aikit/ in the repo.
+    assert!(!repo.path().join(".aikit").exists());
+}
+
+#[test]
+fn folder_init_refuses_inside_hg_repo() {
+    let repo = init_hg_repo();
+    aikit(repo.path())
+        .args(["folder", "init"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicates::str::contains("blocked_repo_present"));
+}
+
+#[test]
+fn init_is_idempotent_in_non_repo() {
+    let dir = TempDir::new().unwrap();
+    let p = dir.path();
+    json_out(p, &["init"]);
+    let second = json_out(p, &["init"]);
+    assert_eq!(second["created_dirs"].as_array().unwrap().len(), 0);
+    assert_eq!(second["vcs"], "none");
+}
+
 // ---- repo doctor ----
 
 #[test]
@@ -356,6 +681,59 @@ fn doctor_readiness_does_not_require_zsh_on_unix() {
         assert_eq!(json["any_runner_available"], true);
         assert_eq!(json["ready"], true);
     }
+}
+
+#[test]
+fn doctor_in_hg_repo_reports_vcs_and_ignore_after_init() {
+    let repo = init_hg_repo();
+    let p = repo.path();
+
+    // Before init: detected as a Mercurial repo, not yet ignored/ready.
+    let before = json_out(p, &["repo", "doctor"]);
+    assert_eq!(before["vcs"], "mercurial");
+    assert_eq!(before["aikit_ignored"], false);
+    assert_eq!(before["ready"], false);
+
+    aikit(p).args(["repo", "init"]).assert().success();
+
+    // After init: ignore detected (filesystem, no hg binary), ready if a runner exists.
+    let after = json_out(p, &["repo", "doctor"]);
+    assert_eq!(after["vcs"], "mercurial");
+    assert_eq!(after["aikit_ignored"], true);
+    assert_eq!(after["ignore_source"], ".hg/hgignore.aikit");
+    if after["any_runner_available"] == true {
+        assert_eq!(after["ready"], true);
+    }
+    // `hg` is not installed in this environment, so branch/HEAD/tracked-tree degrade with a
+    // single warning (not silently). Branch/HEAD are empty; a warning records the cause.
+    assert_eq!(after["git_branch"], "");
+    assert_eq!(after["git_head"], "");
+    let warnings = after["warnings"].as_array().unwrap();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("`hg` is unavailable")),
+        "expected an hg-unavailable warning covering branch/HEAD + tracked-tree: {warnings:?}"
+    );
+}
+
+#[test]
+fn doctor_in_non_repo_folder_reports_vcs_none() {
+    let dir = TempDir::new().unwrap();
+    let p = dir.path();
+    aikit(p).args(["folder", "init"]).assert().success();
+
+    let json = json_out(p, &["repo", "doctor"]);
+    assert_eq!(json["vcs"], "none");
+    assert_eq!(json["temp_dir_exists"], true);
+    assert_eq!(json["aikit_ignored"], false);
+    // A non-repo folder needs no ignore coverage, so it is ready when a runner exists.
+    if json["any_runner_available"] == true {
+        assert_eq!(json["ready"], true);
+    }
+    // Branch/HEAD are empty for a non-repo root.
+    assert_eq!(json["git_branch"], "");
+    assert_eq!(json["git_head"], "");
 }
 
 #[test]

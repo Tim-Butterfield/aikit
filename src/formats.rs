@@ -237,6 +237,9 @@ pub struct ScriptRun {
     pub kind: String,
     pub run_id: String,
     pub repo_root: String,
+    /// VCS managing the run root: `"git"`, `"mercurial"`, or `"none"` (non-repo
+    /// `.aikit/` folder). `git_head_*` are populated only for `"git"`.
+    pub vcs: String,
     /// Repo-relative path of the script as resolved (canonicalized).
     pub script_path: String,
     pub script_sha256: String,
@@ -656,6 +659,8 @@ pub struct RepoInit {
     pub schema_version: u32,
     pub kind: String,
     pub repo_root: String,
+    /// Version-control system managing the repo: `"git"` or `"mercurial"`.
+    pub vcs: String,
     /// Repo-relative aikit directory (`.aikit`).
     pub aikit_dir: String,
     /// Repo-relative temp directory (`.aikit/temp`).
@@ -664,9 +669,11 @@ pub struct RepoInit {
     pub created_dirs: Vec<String>,
     /// Whether `.aikit/` is ignored after this run.
     pub aikit_ignored: bool,
-    /// The ignore source covering `.aikit/` (e.g. `.gitignore`, `.git/info/exclude`).
+    /// The ignore source covering `.aikit/` (e.g. `.gitignore`, `.git/info/exclude`,
+    /// `.hgignore`, `.hg/hgignore.aikit`).
     pub ignore_source: Option<String>,
-    /// Whether `.git/info/exclude` was updated this run.
+    /// Whether the local-only VCS exclude was updated this run (git:
+    /// `.git/info/exclude`; mercurial: `.hg/hgignore.aikit` + `.hg/hgrc`).
     pub info_exclude_updated: bool,
     /// Human-readable action log (created / already-present / ignore actions).
     pub actions: Vec<String>,
@@ -680,7 +687,14 @@ pub struct RepoDoctor {
     pub schema_version: u32,
     pub kind: String,
     pub repo_root: String,
+    /// VCS managing the root: `"git"`, `"mercurial"`, or `"none"` (non-repo folder).
+    pub vcs: String,
+    /// Current branch/bookmark label (VCS-specific; empty for a non-repo folder or when
+    /// the CLI is unavailable). For Mercurial this is the named branch with the active
+    /// bookmark appended. Field name kept for schema stability.
     pub git_branch: String,
+    /// Current HEAD/commit id (Git HEAD, or the Mercurial working-dir parent node; empty
+    /// for a non-repo folder or an unborn repo). Field name kept for schema stability.
     pub git_head: String,
     pub tracked_tree_clean: bool,
     pub aikit_dir_exists: bool,

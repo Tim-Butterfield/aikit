@@ -47,7 +47,9 @@ behavior, and makes no autonomous decisions.
 
 ## Available Commands
 
+- `aikit init`
 - `aikit repo init`
+- `aikit folder init`
 - `aikit repo doctor`
 - `aikit batch start`
 - `aikit batch changed`
@@ -116,24 +118,36 @@ Notes:
 
 ### Repository setup
 
-Recommended first-time setup for a repository — check, prepare, re-check:
+Recommended first-time setup — check, prepare, re-check:
 
 ```sh
 aikit repo doctor   # read-only readiness report
-aikit repo init     # prepare local .aikit/temp/ and local ignore coverage
-aikit repo doctor   # confirm the repo is now ready
+aikit init          # prepare local .aikit/temp/ and (in a repo) ignore coverage
+aikit repo doctor   # confirm it is now ready
 ```
 
-- `aikit repo init` creates `.aikit/` and `.aikit/temp/` if missing and ensures
-  `.aikit/` is locally ignored. It adds the ignore entry to `.git/info/exclude` (local
-  Git metadata, never staged) rather than modifying `.gitignore`, so it does not dirty
-  tracked project files. It is idempotent, creates no output artifacts, does not create
-  `.scratch/` or `.claude/`, and never touches remote Git state.
-- `aikit repo doctor` is **read-only**: it reports the repo root, branch/HEAD, tracked
-  clean/dirty state, whether `.aikit/`, `.aikit/temp/`, and `.aikit/outputs/` exist,
-  whether `.aikit/` is ignored, the default output root, allowed script input locations,
-  the aikit version, any warnings, and an overall `ready` summary. It creates and
-  modifies nothing.
+`aikit` works in **Git** repositories, **Mercurial** repositories, and **non-repo
+folders**. Repository detection is filesystem-based (it looks for an enclosing
+`.git`/`.hg`) and does **not** require the `git`/`hg` CLI to be installed.
+
+- `aikit init` is the adaptive one-step setup: it creates `.aikit/` and `.aikit/temp/`,
+  and **inside a repository** it also ensures `.aikit/` is locally ignored. Use
+  `aikit repo init` to require a repository (errors `blocked_repo_not_found` otherwise), or
+  `aikit folder init` to force non-repo treatment (errors `blocked_repo_present` inside a
+  repo). All three are idempotent, create no output artifacts, and do not create
+  `.scratch/` or `.claude/`.
+- **Ignore coverage uses the VCS's local, never-committed mechanism**, so it never dirties
+  tracked files: for **Git**, an entry in `.git/info/exclude`; for **Mercurial**, a
+  `.hg/hgignore.aikit` pattern registered via `[ui] ignore.aikit` in `.hg/hgrc` (both under
+  `.hg/`, never committed or cloned). Tracked ignore files (`.gitignore` / `.hgignore`) are
+  never modified. In a non-repo folder no ignore coverage is added.
+- `aikit repo doctor` is **read-only**: it reports the repo root, the `vcs`
+  (`git`/`mercurial`/`none`), branch/HEAD, tracked clean/dirty state, whether `.aikit/`,
+  `.aikit/temp/`, and `.aikit/outputs/` exist, whether `.aikit/` is ignored (and the
+  source), the default output root, allowed script input locations, the aikit version, any
+  warnings, and an overall `ready` summary. For Mercurial it detects ignore coverage
+  without invoking `hg` and reads branch/HEAD via `hg` (with `HGPLAIN=1`) when available,
+  degrading to empty with a warning otherwise. It creates and modifies nothing.
 - **Runner readiness:** `repo doctor` reports availability for every supported script
   runner (`sh`, `bash`, `zsh`, `pwsh`, `powershell`, `cmd`, `python3`, `python`, `node`),
   each with `available` and `applicable` (OS-applicability) flags, plus
@@ -142,8 +156,8 @@ aikit repo doctor   # confirm the repo is now ready
   specific Unix shell (so Windows is ready with `pwsh`/`cmd`, and a host without `zsh` is
   still ready). The legacy `interpreters` field (`/bin/sh`, `/bin/zsh`) is retained as
   informational only and no longer gates readiness.
-- Both support `--json`. (If your repo already ignores `.aikit/` via `.gitignore`,
-  `repo init` reports that and leaves `.git/info/exclude` untouched.)
+- All support `--json`. (If your repo already ignores `.aikit/` via a tracked
+  `.gitignore`/`.hgignore`, `repo init`/`init` reports that and adds no local entry.)
 
 ### Repository inventory
 
@@ -304,6 +318,11 @@ aikit script run .scratch/work/temp/task.zsh --print   # validate + show plan, d
 aikit script run .aikit/temp/build.sh --require-clean   # block if the tracked tree is dirty
 ```
 
+- **Run root detection is filesystem-based and VCS-agnostic.** The command anchors to
+  the nearest enclosing `.git`, `.hg`, or `.aikit` directory, so it works in a Git repo, a
+  Mercurial repo, or a non-repo `.aikit/` folder with **no** `git`/`hg` subprocess for
+  detection (blocks `blocked_repo_not_found` when no marker is found). The root's `vcs`
+  (`git`/`mercurial`/`none`) is recorded in `run.json`.
 - **Allowed script input locations** (the script must resolve, after symlink
   resolution, to a real file under one of these): `.aikit/temp/`,
   `.scratch/work/temp/`, `.scratch/work/outputs/`. These are *input* locations, not
@@ -330,8 +349,12 @@ aikit script run .aikit/temp/build.sh --require-clean   # block if the tracked t
   `used_shebang`, `used_extension_map`, the resolved `interpreter`, and the full `argv`.
 - **Clean-tree policy:** the default is allow-dirty. `--require-clean` blocks when
   the tracked working tree is dirty; `--allow-dirty` is the explicit default; the two
-  cannot be combined. Untracked/ignored files (e.g. `.aikit/outputs/`, `.scratch/`)
-  do not make the tree dirty.
+  cannot be combined. The dirty check is VCS-specific and runs **only** with
+  `--require-clean`: **Git** uses `git status --porcelain`; **Mercurial** uses
+  `hg status -mard` (run with `HGPLAIN=1` — the only place the runner invokes `hg`, with a
+  clear error if `hg` is absent). In a non-repo `.aikit/` folder there is no working tree,
+  so `--require-clean` blocks with `blocked_require_clean_unsupported`. Untracked/ignored
+  files (e.g. `.aikit/outputs/`, `.scratch/`) do not make the tree dirty.
 - **`aikit script run --print`** validates policy and shows the planned command
   without executing (recorded as `executed: false`).
 - **`aikit script check`** validates allowed location, path/symlink boundary,
@@ -344,9 +367,9 @@ aikit script run .aikit/temp/build.sh --require-clean   # block if the tracked t
 - **Output (`script run`):** a run directory under `.aikit/outputs/runs/<id>/` by
   default (override with `--output <dir>`; `.scratch` output only when requested
   explicitly) containing the copied script (extension retained), `stdout.txt`,
-  `stderr.txt`, and `run.json` (interpreter, argv, cwd, require_clean, executed, git
-  heads, exit_code, timings, paths, …). Created paths are printed (and included in
-  `--json`).
+  `stderr.txt`, and `run.json` (`vcs`, interpreter, argv, cwd, require_clean, executed,
+  head(s) — populated for Git, empty for Mercurial/non-repo — exit_code, timings, paths,
+  …). Created paths are printed (and included in `--json`).
 - **Exit code:** an executed script's exit code is propagated; policy blocks return a
   non-zero `blocked_*` error (exit 3); invalid usage is exit 2.
 

@@ -12,6 +12,12 @@ use thiserror::Error;
 /// batches add more (path-escape, script-not-allowed, dirty-tree, …).
 pub mod blocked {
     pub const REPO_NOT_FOUND: &str = "blocked_repo_not_found";
+    /// `folder init` was run inside a Git/Mercurial repository, where it refuses to
+    /// create an un-ignored `.aikit/`; use `repo init` or `init` instead.
+    pub const REPO_PRESENT: &str = "blocked_repo_present";
+    /// `--require-clean` was requested for a non-repo aikit root, where there is no
+    /// VCS working tree to compare against.
+    pub const REQUIRE_CLEAN_UNSUPPORTED: &str = "blocked_require_clean_unsupported";
     pub const MISSING_ANCHOR: &str = "blocked_missing_anchor";
     pub const INVALID_ANCHOR: &str = "blocked_invalid_anchor";
     pub const PATH_ESCAPE: &str = "blocked_path_escape";

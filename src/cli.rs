@@ -14,8 +14,9 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
     long_about = "aikit performs deterministic, local, mechanical operations that support \
 AI-agent and human-in-the-loop workflows. It does not call AI providers, performs no \
 model/provider logic, and has no knowledge of any specific AI agent, CLI, slash command, \
-or model. Commands operate on the current Git repository and write machine-readable output \
-where useful.",
+or model. Most commands operate on the current Git repository; setup (`init` / `repo \
+init` / `folder init` / `repo doctor`) and the script runner also work in Mercurial \
+repositories and non-repo `.aikit/` folders. Output is machine-readable where useful.",
     after_help = "Examples:\n  \
 aikit batch start\n  \
 aikit batch changed --anchor .aikit/outputs/batches/<anchor-id>.json\n\n\
@@ -152,16 +153,55 @@ aikit review generate --anchor .aikit/outputs/batches/<anchor-id>.json --json"
     #[command(
         long_about = "Prepare and inspect the current repository's local aikit setup. \
 `repo init` creates the local working area (`.aikit/temp/`) and ensures `.aikit/` is \
-locally ignored; `repo doctor` reports readiness without changing anything.\n\n\
-Neither command touches remote Git state, runs build/test/review commands, or modifies \
-`.gitignore`. `repo init` uses `.git/info/exclude` (local Git metadata) for ignore \
-coverage so it does not dirty tracked project files.",
+locally ignored; `repo doctor` reports readiness without changing anything. Both work in \
+Git and Mercurial repositories (and `repo doctor` also in a non-repo `.aikit/` folder); \
+for the top-level adaptive setup or non-repo folders, see `aikit init` and \
+`aikit folder init`.\n\n\
+Neither command touches remote VCS state, runs build/test/review commands, or modifies a \
+tracked `.gitignore`/`.hgignore`. `repo init` uses each VCS's local, never-committed \
+ignore (Git: `.git/info/exclude`; Mercurial: `.hg/hgignore.aikit` registered in \
+`.hg/hgrc`) so it does not dirty tracked project files.",
         after_help = "Examples:\n  \
 aikit repo doctor\n  \
 aikit repo init\n  \
 aikit repo doctor --json"
     )]
     Repo(RepoCli),
+
+    /// Prepare the current directory for local aikit usage (repo-aware; idempotent).
+    #[command(
+        long_about = "Prepare the current directory for local aikit usage. Creates \
+`.aikit/` and `.aikit/temp/` if missing.\n\n\
+This is the adaptive entry point: if the current directory is inside a Git or Mercurial \
+repository it behaves like `aikit repo init`, additionally ensuring `.aikit/` is locally \
+ignored (Git's `.git/info/exclude`, or a `.hg/hgrc`-registered `.hg/hgignore.aikit` for \
+Mercurial — never a tracked `.gitignore`/`.hgignore`). Outside any repository it behaves \
+like `aikit folder init`, creating the directories only and adding no ignore coverage. \
+Repository detection is filesystem-based (it looks for an enclosing `.git`/`.hg`) and \
+does not require the `git`/`hg` CLI.\n\n\
+Use `aikit repo init` to require a repository, or `aikit folder init` to force non-repo \
+treatment. Idempotent; creates no output artifacts, `.scratch/`, or `.claude/`.",
+        after_help = "Examples:\n  \
+aikit init\n  \
+aikit init --json"
+    )]
+    Init(InitArgs),
+
+    /// Prepare a non-repo folder for local aikit usage (refuses inside a repo).
+    #[command(
+        long_about = "Prepare a non-repository folder for local aikit usage. Creates \
+`.aikit/` and `.aikit/temp/` in the current directory and adds NO version-control ignore \
+coverage.\n\n\
+`folder init` refuses (blocked_repo_present) when run inside a Git or Mercurial \
+repository, since an un-ignored `.aikit/` would surface as untracked there; use \
+`aikit repo init` or `aikit init` in that case. Repository detection is filesystem-based \
+(it looks for an enclosing `.git`/`.hg`) and does not require the `git`/`hg` CLI. \
+Idempotent; creates no output artifacts, `.scratch/`, or `.claude/`.",
+        after_help = "Examples:\n  \
+aikit folder init\n  \
+aikit folder init --json"
+    )]
+    Folder(FolderCli),
 
     /// Validate and run local scripts under mechanical safety controls.
     #[command(
@@ -511,14 +551,20 @@ pub struct RepoCli {
 pub enum RepoCommand {
     /// Prepare the current repository for local aikit usage (idempotent).
     #[command(
-        long_about = "Prepare the current Git repository for local aikit usage. Creates \
-`.aikit/` and `.aikit/temp/` if missing, and ensures `.aikit/` is locally ignored.\n\n\
-Ignore coverage is added to `.git/info/exclude` (local Git metadata that is never \
-staged), NOT to `.gitignore`, so the command does not dirty tracked project files. If \
-`.aikit/` is already ignored by any Git ignore source, no duplicate entry is added.\n\n\
+        long_about = "Prepare the current repository for local aikit usage. Works in both \
+Git and Mercurial repositories (Git is detected first). Creates `.aikit/` and \
+`.aikit/temp/` if missing, and ensures `.aikit/` is locally ignored.\n\n\
+Ignore coverage uses the VCS's local, never-committed mechanism, so the command does \
+not dirty tracked project files. In a Git repo it is added to `.git/info/exclude` \
+(local Git metadata that is never staged), NOT to `.gitignore`. In a Mercurial repo it \
+is written to `.hg/hgignore.aikit` and registered via `[ui] ignore.aikit` in \
+`.hg/hgrc` (both under `.hg/`, never tracked or cloned), NOT to a tracked `.hgignore`. \
+Mercurial is detected by locating an enclosing `.hg/` directory, so no `hg` binary is \
+required. If `.aikit/` is already ignored by an existing ignore source, no duplicate \
+entry is added.\n\n\
 The command is idempotent: it creates `.aikit/temp/` only if missing and adds the ignore \
 entry only if needed. It creates no output artifacts, does not create `.scratch/` or \
-`.claude/`, runs no build/test/review commands, and never touches remote Git state. It \
+`.claude/`, runs no build/test/review commands, and never touches remote VCS state. It \
 reports what was already present and what was created (and `--json` for machine output).",
         after_help = "Examples:\n  \
 aikit repo init\n  \
@@ -530,8 +576,8 @@ aikit repo init --json"
     #[command(
         long_about = "Report repo-local aikit readiness without changing anything. This \
 command is read-only: it creates no files or directories (no `.aikit/`, `.scratch/`, \
-`.claude/`, or `.aikit/outputs/`) and does not modify `.gitignore` or \
-`.git/info/exclude`.\n\n\
+`.claude/`, or `.aikit/outputs/`) and does not modify `.gitignore`, `.git/info/exclude`, \
+`.hgignore`, or `.hg/` state.\n\n\
 It reports the repo root, branch, HEAD, tracked-tree clean/dirty state, whether \
 `.aikit/`, `.aikit/temp/`, and `.aikit/outputs/` exist, whether `.aikit/` is ignored \
 (and the ignore source), the default output root, allowed script input locations (and \
@@ -540,14 +586,20 @@ summary.\n\n\
 Runner availability: it reports `runners` (each supported script runner — sh, bash, zsh, \
 pwsh, powershell, cmd, python3, python, node — with `available` and OS `applicable` \
 flags) and `any_runner_available`. Readiness means sane local aikit state (`.aikit/temp/` \
-present and `.aikit/` ignored) AND at least one supported runner available for the \
+present, and — in a Git/Mercurial repository — `.aikit/` ignored; a non-repo `.aikit/` \
+folder has nothing to ignore against and is ready without ignore coverage) AND at least \
+one supported runner available for the \
 current OS; it does NOT require any specific Unix shell (Windows is ready with \
 pwsh/cmd, and a host without zsh is still ready). The legacy `/bin/sh` and `/bin/zsh` \
 probes are reported as informational shell interpreters only and do not gate \
 readiness.\n\n\
-Exit 0 when a repository is found, even with warnings (missing `.aikit/temp/`, ignore \
-coverage, or no available runner are warnings, not failures); only being outside a Git \
-repository is an error.",
+Works in Git and Mercurial repositories and in non-repo `.aikit/` folders; repository \
+detection is filesystem-based and reports a `vcs` field (git/mercurial/none). For \
+Mercurial the branch/HEAD fields come from `hg` when available (degrading to empty with \
+a warning otherwise); ignore coverage is detected without invoking `hg`. Exit 0 when an \
+aikit root is found, even with warnings (missing `.aikit/temp/`, ignore coverage, or no \
+available runner are warnings, not failures); only being outside any repository or \
+`.aikit/` folder is an error.",
         after_help = "Examples:\n  \
 aikit repo doctor\n  \
 aikit repo doctor --json"
@@ -557,6 +609,45 @@ aikit repo doctor --json"
 
 #[derive(Debug, Args)]
 pub struct RepoInitArgs {
+    /// Print the machine-readable init record to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct InitArgs {
+    /// Print the machine-readable init record to stdout instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FolderCli {
+    #[command(subcommand)]
+    pub command: FolderCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FolderCommand {
+    /// Prepare a non-repo folder for local aikit usage (refuses inside a repo).
+    #[command(
+        long_about = "Prepare a non-repository folder for local aikit usage. Creates \
+`.aikit/` and `.aikit/temp/` in the current directory and adds NO version-control ignore \
+coverage.\n\n\
+`folder init` refuses (blocked_repo_present) when run inside a Git or Mercurial \
+repository, since an un-ignored `.aikit/` would surface as untracked there; use \
+`aikit repo init` or `aikit init` in that case. Repository detection is filesystem-based \
+(it looks for an enclosing `.git`/`.hg`) and does not require the `git`/`hg` CLI. \
+Idempotent; creates no output artifacts, `.scratch/`, or `.claude/`.",
+        after_help = "Examples:\n  \
+aikit folder init\n  \
+aikit folder init --json"
+    )]
+    Init(FolderInitArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct FolderInitArgs {
     /// Print the machine-readable init record to stdout instead of human-readable text.
     #[arg(long)]
     pub json: bool,
@@ -586,6 +677,10 @@ bypassed, can false-positive), and running a script here does not make it safe.\
 The <script-path> must resolve (after symlink resolution) to a real file under an allowed \
 local work area: .aikit/temp/, .scratch/work/temp/, or .scratch/work/outputs/. These are \
 input locations only.\n\n\
+The run root is detected by filesystem walk-up for the nearest enclosing `.git`, `.hg`, \
+or `.aikit` marker (no `git`/`hg` subprocess), so this works in a Git repo, a Mercurial \
+repo, or a non-repo `.aikit/` folder; with no marker it blocks `blocked_repo_not_found`. \
+The root's VCS (git/mercurial/none) is recorded as `vcs` in run.json.\n\n\
 Cross-OS runner detection (deterministic, OS-aware) selects the interpreter in this \
 order: (1) an explicit `--runner <name>`; (2) the config `script_runner.extension_map`; \
 (3) a recognized `#!` shebang unless `--no-shebang`; (4) the built-in extension map; (5) \
@@ -595,11 +690,16 @@ python, python3, node. On Windows, .ps1 uses pwsh/powershell and .cmd/.bat use c
 (no Git Bash required); .sh/.zsh run only if a discoverable interpreter exists. Unknown \
 types block with blocked_unknown_script_type; a selected-but-unavailable runner blocks \
 with blocked_runner_not_found; an unrecognized --runner blocks with \
-blocked_runner_not_allowed. run.json records detected_runner, detection_source, \
+blocked_runner_not_allowed. run.json records vcs, detected_runner, detection_source, \
 used_shebang, used_extension_map, and the full argv.\n\n\
 Clean-tree policy: the default is allow-dirty (these scripts operate on working content). \
 `--require-clean` blocks when the tracked tree is dirty; `--allow-dirty` is the explicit \
-default; the two cannot be combined. With `--print`, policy is validated and the planned \
+default; the two cannot be combined. The dirty check is VCS-specific and runs only under \
+`--require-clean`: Git uses `git status --porcelain`; Mercurial uses `hg status -mard` \
+(run with HGPLAIN=1; the only place the runner invokes `hg`, erroring if `hg` is absent); \
+a non-repo `.aikit/` root has no tracked tree, so `--require-clean` blocks with \
+blocked_require_clean_unsupported. HEAD is recorded in run.json for Git roots only \
+(empty for Mercurial/non-repo). With `--print`, policy is validated and the planned \
 command is shown but the script is not executed (recorded as executed: false). To validate \
 policy without running anything and without writing a run record, use `script check`.\n\n\
 On execution the script is copied into the run directory (retaining its extension), stdout \
@@ -621,11 +721,15 @@ without executing it and without writing any run output. NOTE: this is NOT a sec
 sandbox; it reports whether the mechanical policy accepts the script, not whether the \
 script is safe.\n\n\
 The <script-path> must resolve (after symlink resolution) to a real file under an allowed \
-local work area: .aikit/temp/, .scratch/work/temp/, or .scratch/work/outputs/. The check \
+local work area: .aikit/temp/, .scratch/work/temp/, or .scratch/work/outputs/. The run \
+root is detected by filesystem walk-up for an enclosing `.git`/`.hg`/`.aikit` marker (Git \
+repo, Mercurial repo, or non-repo `.aikit/` folder). The check \
 validates the allowed location, the path/symlink boundary, cross-OS runner detection (same \
 order as `script run`: --runner, config extension_map, shebang unless --no-shebang, \
 built-in extension map, OS-aware fallback), the best-effort forbidden-operation scan, and \
-the clean-tree policy. The JSON report includes detected_runner, detection_source, \
+the clean-tree policy (Git `git status` / Mercurial `hg status -mard` under \
+`--require-clean`, which blocks `blocked_require_clean_unsupported` in a non-repo folder). \
+The JSON report includes detected_runner, detection_source, \
 used_shebang, used_extension_map, and argv.\n\n\
 The script is never executed and never copied; no run directory, stdout.txt, stderr.txt, \
 or run.json is created. Exit 0 when the policy accepts the script, exit 3 with the named \
