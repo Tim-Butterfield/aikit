@@ -1,0 +1,11 @@
+# Cargo build output.
+/target/
+
+.DS_Store
+.scratch/
+.claude/
+
+# Run artifacts from local tooling, written at any depth.
+tmp/
+
+# Cargo.lock is intentionally tracked: aikit is a binary application.

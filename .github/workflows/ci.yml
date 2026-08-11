@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    # aikit makes platform-specific claims — that Windows needs no Git Bash, that `cmd` and
+    # PowerShell are driven natively, that path containment holds against Windows' verbatim
+    # `\\?\` paths — and carries platform-specific code to back them. Testing only on Linux
+    # would leave every one of those claims unverified by CI, which is where they regress
+    # silently. Each of those behaviours has already broken at least once in a way Linux
+    # could not have caught.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Formatting and lints are platform-independent, so run them once rather than three
+      # times: a failure would be identical on every runner.
+      - name: Check formatting
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Tests run everywhere. Tests whose subject is a specific interpreter are gated
+      # (`#[cfg(unix)]`, or a runtime probe), so a host without a POSIX shell skips those
+      # rather than failing — see the portable fixtures in tests/cli_script.rs.
+      - name: Test
+        run: cargo test
+
+      - name: Package list
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo package --list
