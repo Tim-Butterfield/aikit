@@ -37,7 +37,7 @@ jobs:
       # code change under a workflow that is meant to be reproducible. Dependabot raises a
       # pull request when a newer release exists — see .github/dependabot.yml — so pinning
       # does not mean going stale.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # By default checkout leaves the job's token in .git/config, where every later
           # step — including anything a dependency's build script runs — can read it. No
@@ -98,7 +98,7 @@ jobs:
       # still reported 1.97.
       RUSTUP_TOOLCHAIN: "1.88"
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
