@@ -1,0 +1,10 @@
+# Gives a contributor the same toolchain CI uses, so `cargo fmt`/`cargo clippy` locally
+# agree with the checks that gate a pull request. rustup reads this automatically.
+#
+# `channel = "stable"` rather than a pinned version: CI installs stable too, and pinning a
+# version here without a tested MSRV would assert a support claim this project has not
+# verified. `profile = "minimal"` matches what CI installs.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

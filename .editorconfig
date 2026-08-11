@@ -1,0 +1,28 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml,json,toml}]
+indent_size = 2
+
+[*.{sh,ps1,cmd,bat}]
+indent_size = 2
+
+# Two trailing spaces are a hard line break in Markdown, so trimming them silently
+# reflows prose. Left alone deliberately rather than overlooked.
+[*.md]
+trim_trailing_whitespace = false
+
+# Make requires literal tabs for recipe lines; spaces are a syntax error.
+[Makefile]
+indent_style = tab
+
+# Windows batch files are read by cmd, which wants CRLF.
+[*.{cmd,bat}]
+end_of_line = crlf
