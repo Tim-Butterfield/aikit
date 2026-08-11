@@ -711,7 +711,8 @@ directory (normally `$HOME/.cargo/bin`); re-run it after pulling a newer version
 sure that directory is on your `PATH`.
 
 Nothing here needs `make`. A `Makefile` is included as a convenience for working on `aikit`
-itself, but it only wraps `cargo`, and `make` is often absent on Windows:
+itself, but it only wraps `cargo`. It requires **GNU Make** and a POSIX shell, so on Windows
+use the right-hand column — or run the targets from Git Bash or MSYS2, where both exist:
 
 | Convenience | Equivalent without `make` |
 | --- | --- |
@@ -726,6 +727,21 @@ itself, but it only wraps `cargo`, and `make` is often absent on Windows:
 (`make verify` additionally type-checks the Windows-only code paths from a non-Windows host
 via `cargo clippy --target x86_64-pc-windows-msvc`, which needs that target installed —
 `rustup target add x86_64-pc-windows-msvc`. It is redundant when you are already on Windows.)
+
+**A `make` on Windows is often not GNU Make.** Delphi, C++Builder and RAD Studio install
+Embarcadero's MAKE and put it on `PATH`, where it shadows any GNU Make. It cannot read this
+Makefile and says so confusingly — it reports a syntax error on a line that is perfectly
+valid:
+
+```
+Error makefile <n>: colon expected
+```
+
+The line it names is the `.PHONY:` declaration, which plainly has a colon — that parser
+simply has no such special target. Check with `where make` and `make --version`: GNU Make
+says "GNU Make" followed by a 3.x or 4.x version (macOS still ships 3.81). There is no GNU
+Make 5.x, so a 5.x version string means you have a different program. Use the `cargo`
+commands above instead; none of aikit's development needs `make` at all.
 
 macOS (zsh) — recommended:
 

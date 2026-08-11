@@ -1,5 +1,15 @@
 # Development targets for aikit.
 #
+# REQUIRES GNU MAKE AND A POSIX SHELL. This file uses `?=`, `:=`, `.PHONY`, `.DEFAULT_GOAL`
+# and `$(MAKEFILE_LIST)`, and its recipes call grep, awk and `command -v` through pipes.
+# None of that is portable to other makes or to cmd.
+#
+# On Windows a `make` on PATH is frequently Embarcadero's, installed by Delphi, C++Builder
+# or RAD Studio. It cannot parse this file and reports "colon expected" against the `.PHONY`
+# line below — which plainly has a colon; that parser just has no such special target. Run
+# these targets from Git Bash or MSYS2, or skip make entirely: every target is one cargo
+# command, listed in the README.
+#
 # `make install` puts this working tree's aikit on your PATH, which is how you dogfood a
 # change. Note that it REPLACES the aikit you may already be using for other work — run
 # `make verify` first, and `make uninstall` to go back to nothing.
