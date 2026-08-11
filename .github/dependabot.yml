@@ -1,0 +1,13 @@
+version: 2
+
+updates:
+  # CI pins every action by commit SHA so third-party code cannot change under a workflow.
+  # That trade is only safe with something watching for newer releases, which is this file:
+  # without it, a pinned SHA silently becomes an unpatched one.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels: []
