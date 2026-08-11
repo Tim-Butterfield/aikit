@@ -10,8 +10,11 @@ behavior, and makes no autonomous decisions.
 
 ## Install
 
-A Rust toolchain (via [`rustup`](https://rustup.rs)) is the only prerequisite. **`make` is
-not required** — every command below is plain `cargo`.
+A Rust toolchain (via [`rustup`](https://rustup.rs)) is the only prerequisite, **Rust 1.88
+or newer**. **`make` is not required** — every command below is plain `cargo`.
+
+An older toolchain is refused up front by Cargo rather than failing partway through a build.
+CI compiles against 1.88 on every change, so that floor is tested and not merely claimed.
 
 Install the latest directly from GitHub — no clone required:
 

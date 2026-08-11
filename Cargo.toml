@@ -2,6 +2,10 @@
 name = "aikit"
 version = "0.1.0"
 edition = "2021"
+# Measured, not chosen: the full suite passes on 1.88, and 1.87 is rejected outright
+# (`darling` and `rmcp` both require 1.88). The `msrv` job in CI keeps this honest — without
+# it, the first use of a newer feature would break the promise silently.
+rust-version = "1.88"
 description = "A local CLI for deterministic AI-assisted repository workflows."
 license = "MIT"
 repository = "https://github.com/Tim-Butterfield/aikit"
