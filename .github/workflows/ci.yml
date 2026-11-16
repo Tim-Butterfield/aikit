@@ -34,9 +34,8 @@ jobs:
     steps:
       # Actions are pinned by commit SHA, not by tag or branch. A tag can be moved and
       # `dtolnay/rust-toolchain@stable` is a *branch*, so both would otherwise let third-party
-      # code change under a workflow that is meant to be reproducible. Dependabot raises a
-      # pull request when a newer release exists — see .github/dependabot.yml — so pinning
-      # does not mean going stale.
+      # code change under a workflow that is meant to be reproducible. Moving to a newer
+      # release is a deliberate edit of the pinned SHA and its version comment.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           # By default checkout leaves the job's token in .git/config, where every later
